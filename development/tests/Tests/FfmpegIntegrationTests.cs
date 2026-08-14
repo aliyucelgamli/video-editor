@@ -99,7 +99,42 @@ public static class FfmpegIntegrationTests
             if (Math.Abs(frame.Bgra[i] - frame.Bgra[i + 2]) <= 2) grayish++;
         Assert.True(grayish > 320 * 180 * 0.95, "grayscale effect visible in composed frame");
 
-        // 6) Export the yellow-range selection [0.5, 1.5) and verify the result.
+        // 6) Stream frames continuously (the smooth-playback fast path).
+        using (var pipe = StreamingFramePipe.Start(locator, clip, sourceStart: 0.2, playbackRate: 1.0,
+                   width: 320, height: 180, fps: 24))
+        {
+            Assert.True(pipe != null, "pipe started");
+            var frames = 0;
+            for (var i = 0; i < 5; i++)
+            {
+                var streamed = await pipe!.ReadFrameAsync(CancellationToken.None);
+                if (streamed is null) break;
+                Assert.Equal(320 * 180 * 4, streamed.Length, "streamed frame size");
+                frames++;
+            }
+            Assert.True(frames >= 5, "streamed several consecutive frames");
+        }
+
+        // 7) Real-time playback engine: playhead advances with the wall clock,
+        //    frames keep arriving, and the run ends exactly at the duration.
+        {
+            var engine = new VideoEditor.MediaEngine.Playback.PlaybackEngine(
+                compositor, new FrameExtractor(locator), new VideoEffectPipeline(catalog), locator);
+            var presented = 0;
+            var lastTime = -1.0;
+            var monotonic = true;
+
+            await engine.RunAsync(project, origin: 0, duration: 1.0, width: 320, height: 180, fps: 24,
+                onTime: t => { if (t < lastTime) monotonic = false; lastTime = t; },
+                present: (_, w, h) => { presented++; Assert.Equal(320, w, "frame width"); },
+                CancellationToken.None);
+
+            Assert.True(monotonic, "playhead time is monotonic");
+            Assert.Close(1.0, lastTime, "run ends at the requested duration", 0.05);
+            Assert.True(presented >= 5, $"frames were presented continuously (got {presented})");
+        }
+
+        // 8) Export the yellow-range selection [0.5, 1.5) and verify the result.
         project.ExportRange = new TimeRange { Start = 0.5, End = 1.5 };
         var output = Path.Combine(workDir, "out.mp4");
         var export = new ExportService(locator, compositor, catalog);

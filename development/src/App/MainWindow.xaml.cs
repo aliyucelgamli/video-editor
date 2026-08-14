@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private EventDragMode _eventDragMode = EventDragMode.None;
     private EventViewModel? _movingEvent;
     private Border? _movingEventBorder;
+    private Border? _linkedEventBorder;
     private double _movingEventStartX;
     private double _movingEventNewStart;
     private double _stretchNewDuration;
@@ -207,6 +208,7 @@ public partial class MainWindow : Window
 
         _movingEvent = evt;
         _movingEventBorder = border;
+        _linkedEventBorder = evt.LinkedEventId is Guid linkedId ? FindEventBorder(linkedId) : null;
         _movingEventStartX = e.GetPosition(LanesScroll).X;
         _movingEventNewStart = evt.StartSeconds;
         _stretchNewDuration = evt.DurationSeconds;
@@ -215,6 +217,30 @@ public partial class MainWindow : Window
 
         border.CaptureMouse();
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Finds the on-screen block of another event (the linked A/V partner), so
+    /// drag feedback can move the pair together instead of only the grabbed clip.
+    /// </summary>
+    private Border? FindEventBorder(Guid eventId)
+    {
+        return FindInTree(LanesScroll);
+
+        Border? FindInTree(DependencyObject parent)
+        {
+            var count = VisualTreeHelper.GetChildrenCount(parent);
+            for (var i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is Border border &&
+                    border.DataContext is EventViewModel evt &&
+                    evt.Id == eventId)
+                    return border;
+                if (FindInTree(child) is { } found) return found;
+            }
+            return null;
+        }
     }
 
     /// <summary>Shift near an edge = time stretch (VEGAS-style); anywhere else = move.</summary>
@@ -253,8 +279,10 @@ public partial class MainWindow : Window
         var desired = _movingEvent!.StartSeconds + deltaX / pps;
         _movingEventNewStart = _viewModel.SnapTime(desired, _movingEvent.DurationSeconds, _movingEvent.Id);
 
-        _movingEventBorder!.RenderTransform =
-            new TranslateTransform((_movingEventNewStart - _movingEvent.StartSeconds) * pps, 0);
+        var transform = new TranslateTransform((_movingEventNewStart - _movingEvent.StartSeconds) * pps, 0);
+        _movingEventBorder!.RenderTransform = transform;
+        // The linked audio/video partner follows live, not only after the drop.
+        if (_linkedEventBorder != null) _linkedEventBorder.RenderTransform = transform;
         _viewModel.StatusText = $"Move to {_movingEventNewStart:0.##}s";
     }
 
@@ -318,8 +346,10 @@ public partial class MainWindow : Window
         var newDuration = _stretchNewDuration;
 
         if (_movingEventBorder != null) _movingEventBorder.RenderTransform = null;
+        if (_linkedEventBorder != null) _linkedEventBorder.RenderTransform = null;
         _movingEvent = null;
         _movingEventBorder = null;
+        _linkedEventBorder = null;
         _isDraggingEvent = false;
         _eventDragMode = EventDragMode.None;
 
@@ -331,14 +361,24 @@ public partial class MainWindow : Window
             _viewModel.StretchEvent(evt.Id, newStart, newDuration);
     }
 
-    // ---------- fx button + right-click menu ----------
+    // ---------- fx button (Event FX window) + right-click menu ----------
+
+    private EventFxWindow? _fxWindow;
 
     private void EventFx_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not EventViewModel evt) return;
-        _viewModel.SelectEvent(evt.Id);
-        ShowEventMenu((UIElement)sender, evt, includeClipActions: false);
+        OpenFxWindow(evt);
         e.Handled = true;
+    }
+
+    /// <summary>Opens the per-clip Event FX window (one at a time).</summary>
+    private void OpenFxWindow(EventViewModel evt)
+    {
+        _fxWindow?.Close();
+        _fxWindow = new EventFxWindow(_viewModel, evt.Id, evt.Name) { Owner = this };
+        _fxWindow.Closed += (_, _) => _fxWindow = null;
+        _fxWindow.Show();
     }
 
     private void EventBlock_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -364,6 +404,10 @@ public partial class MainWindow : Window
         var effectItems = BuildEffectMenuItems(evt.Id);
         if (includeClipActions)
         {
+            var openFx = new MenuItem { Header = "Event FX…" };
+            openFx.Click += (_, _) => OpenFxWindow(evt);
+            menu.Items.Add(openFx);
+
             var addEffect = new MenuItem { Header = "Add Effect" };
             foreach (var item in effectItems) addEffect.Items.Add(item);
             addEffect.IsEnabled = effectItems.Count > 0;
@@ -378,6 +422,16 @@ public partial class MainWindow : Window
             menu.Items.Add(removeEffects);
 
             menu.Items.Add(new Separator());
+
+            var unlink = new MenuItem
+            {
+                Header = "Unlink Audio/Video",
+                InputGestureText = "T",
+                IsEnabled = evt.IsLinked,
+                ToolTip = "After unlinking, the video and its audio move independently"
+            };
+            unlink.Click += (_, _) => _viewModel.UnlinkEvent(evt.Id);
+            menu.Items.Add(unlink);
 
             var delete = new MenuItem { Header = "Delete (Del)" };
             delete.Click += (_, _) => _viewModel.DeleteEvent(evt.Id);

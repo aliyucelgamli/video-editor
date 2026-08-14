@@ -37,6 +37,7 @@ public class EventViewModel : ObservableObject
         Width = Math.Max(6, evt.Duration * pixelsPerSecond);
         Brush = brush;
         DurationLabel = $"{evt.Duration:0.#}s";
+        LinkedEventId = evt.LinkedEventId;
         IsLinked = evt.LinkedEventId != null;
         HasEffects = evt.Effects.Count > 0;
 
@@ -60,6 +61,7 @@ public class EventViewModel : ObservableObject
     public Brush Brush { get; }
     public string DurationLabel { get; }
     public string ToolTip { get; }
+    public Guid? LinkedEventId { get; }
     public bool IsLinked { get; }
     public bool HasEffects { get; }
     public bool IsAudio { get; }

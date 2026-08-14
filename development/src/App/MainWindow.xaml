@@ -25,6 +25,7 @@
         <KeyBinding Key="Y" Command="{Binding RedoCommand}"/>
         <KeyBinding Key="Delete" Command="{Binding DeleteSelectedCommand}"/>
         <KeyBinding Key="Space" Command="{Binding PlayPauseCommand}"/>
+        <KeyBinding Key="T" Command="{Binding UnlinkSelectedCommand}"/>
         <KeyBinding Key="I" Command="{Binding SetRangeStartCommand}"/>
         <KeyBinding Key="O" Command="{Binding SetRangeEndCommand}"/>
         <KeyBinding Modifiers="Control+Shift" Key="R" Command="{Binding ClearRangeCommand}"/>
@@ -279,7 +280,20 @@
                 BorderBrush="{StaticResource EdgeBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="10,6">
-            <StackPanel Orientation="Horizontal">
+            <DockPanel>
+
+                <!-- Export lives top-right (VEGAS-style render button) -->
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        Background="#FF3A3115" VerticalAlignment="Center"
+                        Command="{Binding ExportCommand}"
+                        ToolTip="Render to MP4 — exports the span between the two yellow bars on the timeline (drag them, or set with I / O)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;" Foreground="#FFFFD54F"/>
+                        <TextBlock Text="Export" Margin="6,0,0,0" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Button>
+
+                <StackPanel Orientation="Horizontal">
 
                 <Border Width="26" Height="26" CornerRadius="7"
                         Background="{StaticResource BrandBrush}" VerticalAlignment="Center">
@@ -323,13 +337,6 @@
                         <TextBlock Text="Import" Margin="6,0,0,0"/>
                     </StackPanel>
                 </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding ExportCommand}"
-                        ToolTip="Render to MP4 — uses the yellow start/end range when one is set (I / O keys)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;" Foreground="#FFFFD54F"/>
-                        <TextBlock Text="Export" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
 
                 <Border Style="{StaticResource ToolbarSeparator}"/>
 
@@ -371,7 +378,8 @@
                         <TextBlock Text="+ Overlay" Margin="6,0,0,0"/>
                     </StackPanel>
                 </Button>
-            </StackPanel>
+                </StackPanel>
+            </DockPanel>
         </Border>
 
         <!-- ======== Status bar ======== -->

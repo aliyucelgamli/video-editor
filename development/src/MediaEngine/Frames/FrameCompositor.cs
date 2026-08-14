@@ -66,6 +66,46 @@ public class FrameCompositor
         return new RawFrame(canvas, width, height);
     }
 
+    /// <summary>One visual layer visible at a point in time (playback fast path).</summary>
+    public record VisualLayer(Track Track, TimelineEvent Event, MediaItem Media);
+
+    /// <summary>
+    /// Returns the single visual layer visible at <paramref name="time"/>, or
+    /// null when zero or multiple layers overlap. Playback streams this single
+    /// layer directly (fast); overlaps fall back to full composition.
+    /// </summary>
+    public static VisualLayer? FindSingleVisualLayer(Project project, double time)
+    {
+        VisualLayer? found = null;
+        foreach (var track in EnumerateVisualTracksBottomUp(project))
+        {
+            if (track.Muted) continue;
+            foreach (var evt in track.Events)
+            {
+                if (!evt.Contains(time)) continue;
+                var media = project.Media.FindById(evt.MediaId);
+                if (media is null || media.Type == MediaType.Audio) continue;
+                if (found != null) return null; // more than one layer → composite path
+                found = new VisualLayer(track, evt, media);
+            }
+        }
+        return found;
+    }
+
+    /// <summary>Multiplies a frame toward black (event/track opacity + fades).</summary>
+    public static void ApplyOpacity(byte[] bgra, double opacity)
+    {
+        opacity = Math.Clamp(opacity, 0, 1);
+        if (opacity >= 0.999) return;
+
+        for (var i = 0; i < bgra.Length; i += 4)
+        {
+            bgra[i] = (byte)(bgra[i] * opacity);
+            bgra[i + 1] = (byte)(bgra[i + 1] * opacity);
+            bgra[i + 2] = (byte)(bgra[i + 2] * opacity);
+        }
+    }
+
     /// <summary>Fade-in/out progress at the given timeline position (0..1).</summary>
     public static double FadeFactor(TimelineEvent evt, double time)
     {

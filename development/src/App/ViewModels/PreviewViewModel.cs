@@ -1,39 +1,50 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
 using VideoEditor.App.Services;
 using VideoEditor.Domain;
+using VideoEditor.MediaEngine.Effects;
+using VideoEditor.MediaEngine.Ffmpeg;
 using VideoEditor.MediaEngine.Frames;
+using VideoEditor.MediaEngine.Playback;
 
 namespace VideoEditor.App.ViewModels;
 
 /// <summary>
-/// Drives the preview monitor: renders the composed frame at the playhead and
-/// runs the play loop (with mixed timeline audio when available). Rendering is
-/// throttled — a newer request cancels the one in flight, so scrubbing stays
-/// responsive.
+/// Drives the preview monitor. Scrubbing renders single frames through the
+/// compositor; playback delegates to <see cref="PlaybackEngine"/> (background
+/// decoding, frame dropping, wall-clock playhead) while timeline audio plays
+/// alongside.
 /// </summary>
 public class PreviewViewModel : ObservableObject
 {
     private const int MaxPreviewWidth = 640;
+    private const double PlaybackFps = 24;
 
     private readonly FrameCompositor _compositor;
+    private readonly PlaybackEngine _engine;
     private readonly Func<Project> _getProject;
     private readonly PreviewAudioService? _audio;
 
     private WriteableBitmap? _bitmap;
     private ImageSource? _currentFrame;
     private CancellationTokenSource? _renderCts;
+    private CancellationTokenSource? _playbackCts;
     private bool _isPlaying;
     private double _playheadTime;
     private long _renderStamp;
 
     public PreviewViewModel(
-        FrameCompositor compositor, Func<Project> getProject, PreviewAudioService? audio = null)
+        FrameCompositor compositor,
+        FrameExtractor extractor,
+        VideoEffectPipeline effects,
+        FFmpegLocator locator,
+        Func<Project> getProject,
+        PreviewAudioService? audio = null)
     {
         _compositor = compositor;
+        _engine = new PlaybackEngine(compositor, extractor, effects, locator);
         _getProject = getProject;
         _audio = audio;
         PlayPauseCommand = new RelayCommand(TogglePlay);
@@ -85,12 +96,14 @@ public class PreviewViewModel : ObservableObject
     public void Seek(double time, bool render = true)
     {
         PlayheadTime = Math.Max(0, time);
-        if (render) RequestRender();
+        if (render && !IsPlaying) RequestRender();
     }
 
     /// <summary>Re-renders the current frame (after edits, effect changes…).</summary>
     public void RequestRender()
     {
+        if (IsPlaying) return; // the play loop owns the screen
+
         var project = _getProject();
         var (width, height) = PreviewSize(project);
         var time = _playheadTime;
@@ -107,8 +120,7 @@ public class PreviewViewModel : ObservableObject
     {
         if (IsPlaying)
         {
-            IsPlaying = false;
-            _audio?.Stop();
+            StopPlayback();
             return;
         }
 
@@ -117,62 +129,74 @@ public class PreviewViewModel : ObservableObject
         if (_playheadTime >= duration - 0.02) PlayheadTime = 0;
 
         IsPlaying = true;
-        _ = RunPlaybackAsync(duration);
+        var cts = new CancellationTokenSource();
+        _playbackCts = cts;
+        _ = RunPlaybackAsync(duration, cts);
     }
 
     public void Stop()
     {
-        IsPlaying = false;
-        _audio?.Stop();
+        StopPlayback();
         Seek(0);
     }
 
-    private async Task RunPlaybackAsync(double duration)
+    private void StopPlayback()
     {
+        IsPlaying = false;
+        _playbackCts?.Cancel();
+        _audio?.Stop();
+    }
+
+    private async Task RunPlaybackAsync(double duration, CancellationTokenSource cts)
+    {
+        var token = cts.Token;
         var project = _getProject();
         var (width, height) = PreviewSize(project);
         var origin = _playheadTime;
 
-        // Mix and start the timeline audio first, then run the video clock in
-        // step with it. Failure (no audio events, no ffmpeg) = silent playback.
+        // Audio first, then the engine's clock runs in step with it.
         if (_audio != null)
         {
-            await _audio.StartAsync(project, origin, CancellationToken.None);
-            if (!IsPlaying)
+            await _audio.StartAsync(project, origin, token);
+            if (!IsPlaying || token.IsCancellationRequested)
             {
-                _audio.Stop(); // the user paused while audio was being prepared
+                _audio.Stop();
+                FinishPlayback(cts);
                 return;
             }
         }
 
-        var clock = Stopwatch.StartNew();
-
-        while (IsPlaying)
+        try
         {
-            var time = origin + clock.Elapsed.TotalSeconds;
-            if (time >= duration)
-            {
-                PlayheadTime = duration;
-                IsPlaying = false;
-                _audio?.Stop();
-                break;
-            }
-
-            PlayheadTime = time;
-            var stamp = ++_renderStamp;
-            try
-            {
-                // Sequential await = natural frame pacing at decode speed.
-                await RenderAsync(project, time, width, height, stamp, CancellationToken.None);
-            }
-            catch
-            {
-                IsPlaying = false;
-                _audio?.Stop();
-                break;
-            }
+            await _engine.RunAsync(
+                project, origin, duration, width, height, PlaybackFps,
+                onTime: t => PlayheadTime = t,
+                present: Present,
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+            // pause/stop — expected
+        }
+        catch
+        {
+            // playback must never crash the app
+        }
+        finally
+        {
+            FinishPlayback(cts);
         }
     }
+
+    private void FinishPlayback(CancellationTokenSource cts)
+    {
+        IsPlaying = false;
+        _audio?.Stop();
+        if (_playbackCts == cts) _playbackCts = null;
+        cts.Dispose();
+    }
+
+    // ---------- Single-frame rendering (scrub) ----------
 
     private async Task RenderAsync(
         Project project, double time, int width, int height, long stamp, CancellationToken cancellationToken)
@@ -192,11 +216,15 @@ public class PreviewViewModel : ObservableObject
         }
 
         if (stamp != _renderStamp) return; // a newer frame is already on its way
+        Present(frame.Bgra, frame.Width, frame.Height);
+    }
 
-        if (_bitmap is null || _bitmap.PixelWidth != frame.Width || _bitmap.PixelHeight != frame.Height)
-            _bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgra32, null);
+    private void Present(byte[] bgra, int width, int height)
+    {
+        if (_bitmap is null || _bitmap.PixelWidth != width || _bitmap.PixelHeight != height)
+            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
 
-        _bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Bgra, frame.Width * 4, 0);
+        _bitmap.WritePixels(new Int32Rect(0, 0, width, height), bgra, width * 4, 0);
         CurrentFrame = _bitmap;
     }
 

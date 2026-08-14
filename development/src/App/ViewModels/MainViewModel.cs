@@ -79,11 +79,14 @@ public class MainViewModel : ObservableObject
             _catalog, new VefxSerializer(), Path.Combine(appRoot, "user", "effects"));
         _userEffects.LoadAll();
 
-        var compositor = new FrameCompositor(new FrameExtractor(_ffmpeg), new VideoEffectPipeline(_catalog));
+        var extractor = new FrameExtractor(_ffmpeg);
+        var effectPipeline = new VideoEffectPipeline(_catalog);
+        var compositor = new FrameCompositor(extractor, effectPipeline);
         _exporter = new ExportService(_ffmpeg, compositor, _catalog);
 
         var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
-        Preview = new PreviewViewModel(compositor, () => _projects.Current, previewAudio);
+        Preview = new PreviewViewModel(
+            compositor, extractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio);
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -120,6 +123,9 @@ public class MainViewModel : ObservableObject
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
         DownloadFfmpegCommand = new RelayCommand(DownloadFfmpeg, () => !_isInstallingFfmpeg);
+        UnlinkSelectedCommand = new RelayCommand(
+            () => { if (_selectedEventId is Guid id) UnlinkEvent(id); },
+            () => GetSelectedContext()?.Event.LinkedEventId != null);
 
         RebuildFromModel();
 
@@ -213,6 +219,7 @@ public class MainViewModel : ObservableObject
     public RelayCommand ExportCommand { get; }
     public RelayCommand CancelExportCommand { get; }
     public RelayCommand DownloadFfmpegCommand { get; }
+    public RelayCommand UnlinkSelectedCommand { get; }
 
     public double PixelsPerSecond => _pixelsPerSecond;
 
@@ -362,6 +369,14 @@ public class MainViewModel : ObservableObject
         {
             StatusText = "Nothing to export — the timeline is empty";
             return;
+        }
+
+        // No range yet? Create one spanning the whole project so the two
+        // yellow bars appear on the timeline — drag them to narrow the export.
+        if (_projects.Current.ExportRange is null)
+        {
+            CommitRange(new TimeRange { Start = 0, End = _projects.Current.Duration });
+            StatusText = "Export range set to the whole project — drag the yellow bars to change it";
         }
 
         var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
@@ -819,6 +834,32 @@ public class MainViewModel : ObservableObject
             ? commands[0]
             : new CompositeCommand($"Stretch '{evt.Name}'", commands));
         StatusText = $"Stretched '{evt.Name}' to {newDuration:0.##}s ({stretch.NewRate:0.##}x speed)";
+    }
+
+    /// <summary>
+    /// Breaks the link between an A/V pair so they move independently
+    /// (right-click menu or the T key). Undoable.
+    /// </summary>
+    public void UnlinkEvent(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        if (evt.LinkedEventId is not Guid linkedId) return;
+
+        var commands = new List<IEditorCommand>
+        {
+            new SetValueCommand<Guid?>("Unlink", evt.LinkedEventId, null, v => evt.LinkedEventId = v)
+        };
+        if (_projects.Current.FindEvent(linkedId) is { } linked)
+        {
+            var partner = linked.Event;
+            commands.Add(new SetValueCommand<Guid?>(
+                "Unlink partner", partner.LinkedEventId, null, v => partner.LinkedEventId = v));
+        }
+
+        _selectedEventId = eventId;
+        _undoRedo.ExecuteCommand(new CompositeCommand($"Unlink audio/video of '{evt.Name}'", commands));
+        StatusText = $"Unlinked '{evt.Name}' — the pair now moves independently";
     }
 
     // ---------- Selection ----------

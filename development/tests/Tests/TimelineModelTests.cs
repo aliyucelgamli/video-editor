@@ -95,6 +95,25 @@ public static class TimelineModelTests
             Assert.Close(StretchEventCommand.MinDuration, evt.Duration, "clamped duration");
         });
 
+        TestRunner.Add("Unlink: clears both link ids and restores on undo", () =>
+        {
+            var undo = new UndoRedoService();
+            var video = new TimelineEvent { Name = "clip" };
+            var audio = new TimelineEvent { Name = "clip (audio)" };
+            video.LinkedEventId = audio.Id;
+            audio.LinkedEventId = video.Id;
+
+            undo.ExecuteCommand(new CompositeCommand("Unlink", new IEditorCommand[]
+            {
+                new SetValueCommand<Guid?>("Unlink", video.LinkedEventId, null, v => video.LinkedEventId = v),
+                new SetValueCommand<Guid?>("Unlink partner", audio.LinkedEventId, null, v => audio.LinkedEventId = v)
+            }));
+            Assert.True(video.LinkedEventId is null && audio.LinkedEventId is null, "both cleared");
+
+            undo.Undo();
+            Assert.True(video.LinkedEventId == audio.Id && audio.LinkedEventId == video.Id, "links restored");
+        });
+
         TestRunner.Add("Linked events: composite move keeps A/V in sync", () =>
         {
             var undo = new UndoRedoService();
