@@ -23,6 +23,12 @@ public class FFmpegLocator
     public string? FfprobePath { get { EnsureSearched(); return _ffprobe; } }
     public bool IsAvailable => FfmpegPath != null;
 
+    /// <summary>The folder the in-app installer drops the executables into.</summary>
+    public string ToolsDirectory => Path.Combine(_appRoot, "tools", "ffmpeg");
+
+    /// <summary>Forgets the cached search result (call after installing FFmpeg).</summary>
+    public void Refresh() => _searched = false;
+
     /// <summary>Download page shown to the user when FFmpeg cannot be found.</summary>
     public const string DownloadUrl = "https://www.gyan.dev/ffmpeg/builds/";
 

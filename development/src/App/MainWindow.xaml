@@ -598,8 +598,8 @@
                         <Image Grid.Row="0" Source="{Binding Preview.CurrentFrame}" Margin="8"
                                RenderOptions.BitmapScalingMode="LowQuality"/>
 
-                        <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                    IsHitTestVisible="False">
+                        <!-- Placeholder overlay: hit-testable so the FFmpeg download button works -->
+                        <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -617,10 +617,25 @@
                                        Margin="0,12,0,2" HorizontalAlignment="Center"/>
                             <TextBlock Text="Space plays with sound, the ruler scrubs"
                                        Foreground="#FF343B49" FontSize="11" HorizontalAlignment="Center"/>
-                            <TextBlock Text="⚠ FFmpeg not found — preview and export are disabled.&#10;Install FFmpeg and add it to PATH, or copy it into tools\ffmpeg\."
+                            <TextBlock Text="⚠ FFmpeg not found — preview and export are disabled."
                                        Foreground="#FFE0A03C" FontSize="11" Margin="0,14,0,0"
                                        TextAlignment="Center" HorizontalAlignment="Center"
                                        Visibility="{Binding FfmpegMissing, Converter={StaticResource BoolToVis}}"/>
+                            <Button Margin="0,8,0,0" Padding="14,7" HorizontalAlignment="Center"
+                                    Background="#FF2C3E5C"
+                                    Style="{StaticResource ToolButton}"
+                                    Command="{Binding DownloadFfmpegCommand}"
+                                    Visibility="{Binding FfmpegMissing, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="Downloads a portable FFmpeg build (~90 MB, one time) into tools\ffmpeg\ — no admin rights needed">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
+                                    <TextBlock Text="Download FFmpeg automatically" Margin="7,0,0,0"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock Text="Downloading FFmpeg… progress is shown in the status bar below."
+                                       Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,14,0,0"
+                                       TextAlignment="Center" HorizontalAlignment="Center"
+                                       Visibility="{Binding IsInstallingFfmpeg, Converter={StaticResource BoolToVis}}"/>
                         </StackPanel>
 
                         <!-- Transport -->

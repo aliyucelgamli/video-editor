@@ -119,6 +119,7 @@ public class MainViewModel : ObservableObject
         ClearRangeCommand = new RelayCommand(ClearRange, () => HasRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
+        DownloadFfmpegCommand = new RelayCommand(DownloadFfmpeg, () => !_isInstallingFfmpeg);
 
         RebuildFromModel();
 
@@ -128,7 +129,62 @@ public class MainViewModel : ObservableObject
     }
 
     /// <summary>True when ffmpeg/ffprobe could not be located — media features are off.</summary>
-    public bool FfmpegMissing => !_ffmpeg.IsAvailable;
+    public bool FfmpegMissing => !_ffmpeg.IsAvailable && !_isInstallingFfmpeg;
+
+    // ---------- One-click FFmpeg install ----------
+
+    private bool _isInstallingFfmpeg;
+
+    public bool IsInstallingFfmpeg
+    {
+        get => _isInstallingFfmpeg;
+        private set
+        {
+            if (!SetProperty(ref _isInstallingFfmpeg, value)) return;
+            OnPropertyChanged(nameof(FfmpegMissing));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    private async void DownloadFfmpeg()
+    {
+        IsInstallingFfmpeg = true;
+        var progress = new Progress<double>(p =>
+            StatusText = $"Downloading FFmpeg… {p:P0} (about 90 MB, one time only)");
+
+        try
+        {
+            await new FfmpegInstaller().InstallAsync(_ffmpeg.ToolsDirectory, progress);
+            _ffmpeg.Refresh();
+
+            if (_ffmpeg.IsAvailable)
+            {
+                StatusText = "FFmpeg installed — preview, waveforms and export are ready";
+                _enrichment.Enrich(_projects.Current.Media.Items.ToList(), _projects.Current,
+                    DefaultEventDuration, () => { RebuildFromModel(); RequestPreviewRefresh(); });
+                RebuildFromModel();
+                RequestPreviewRefresh();
+            }
+            else
+            {
+                StatusText = "FFmpeg download finished but the executable was not found — see logs";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = "FFmpeg download failed";
+            MessageBox.Show(
+                "FFmpeg could not be downloaded automatically.\n\n" + ex.Message +
+                $"\n\nManual install: download from {FFmpegLocator.DownloadUrl} and copy " +
+                "ffmpeg.exe + ffprobe.exe into tools\\ffmpeg\\ next to run.bat.",
+                "Download Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsInstallingFfmpeg = false;
+            OnPropertyChanged(nameof(FfmpegMissing));
+        }
+    }
 
     public PreviewViewModel Preview { get; }
     public EffectsPanelViewModel Effects { get; }
@@ -156,6 +212,7 @@ public class MainViewModel : ObservableObject
     public RelayCommand ClearRangeCommand { get; }
     public RelayCommand ExportCommand { get; }
     public RelayCommand CancelExportCommand { get; }
+    public RelayCommand DownloadFfmpegCommand { get; }
 
     public double PixelsPerSecond => _pixelsPerSecond;
 

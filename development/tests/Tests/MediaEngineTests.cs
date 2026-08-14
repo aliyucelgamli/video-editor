@@ -11,6 +11,14 @@ namespace VideoEditor.Tests;
 
 public static class MediaEngineTests
 {
+    private static void CreateEntry(
+        System.IO.Compression.ZipArchive archive, string entryName, string content)
+    {
+        var entry = archive.CreateEntry(entryName);
+        using var writer = new StreamWriter(entry.Open());
+        writer.Write(content);
+    }
+
     public static void Register()
     {
         TestRunner.Add("Probe: parses ffprobe JSON (duration, streams, rational fps)", () =>
@@ -203,6 +211,54 @@ public static class MediaEngineTests
             Assert.Close(0.5, FrameCompositor.FadeFactor(evt, 1), "fade in midpoint");
             Assert.Close(1.0, FrameCompositor.FadeFactor(evt, 5), "middle");
             Assert.Close(0.5, FrameCompositor.FadeFactor(evt, 9), "fade out midpoint");
+        });
+
+        TestRunner.Add("Installer: extracts ffmpeg/ffprobe from any zip layout", () =>
+        {
+            var work = Path.Combine(Path.GetTempPath(), $"ffzip_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(work);
+            var zipPath = Path.Combine(work, "build.zip");
+            var target = Path.Combine(work, "tools");
+            try
+            {
+                using (var archive = System.IO.Compression.ZipFile.Open(
+                    zipPath, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    CreateEntry(archive, "ffmpeg-7.1-essentials_build/bin/ffmpeg.exe", "fake-ffmpeg");
+                    CreateEntry(archive, "ffmpeg-7.1-essentials_build/bin/ffprobe.exe", "fake-ffprobe");
+                    CreateEntry(archive, "ffmpeg-7.1-essentials_build/README.txt", "readme");
+                }
+
+                FfmpegInstaller.ExtractPortableBuild(zipPath, target);
+                Assert.True(File.Exists(Path.Combine(target, "ffmpeg.exe")), "ffmpeg extracted");
+                Assert.True(File.Exists(Path.Combine(target, "ffprobe.exe")), "ffprobe extracted");
+                Assert.False(File.Exists(Path.Combine(target, "README.txt")), "extras skipped");
+            }
+            finally
+            {
+                Directory.Delete(work, recursive: true);
+            }
+        });
+
+        TestRunner.Add("Installer: rejects archives without ffmpeg", () =>
+        {
+            var work = Path.Combine(Path.GetTempPath(), $"ffzip_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(work);
+            var zipPath = Path.Combine(work, "empty.zip");
+            try
+            {
+                using (var archive = System.IO.Compression.ZipFile.Open(
+                    zipPath, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    CreateEntry(archive, "notes.txt", "nothing here");
+                }
+                Assert.Throws<InvalidOperationException>(() =>
+                    FfmpegInstaller.ExtractPortableBuild(zipPath, Path.Combine(work, "tools")));
+            }
+            finally
+            {
+                Directory.Delete(work, recursive: true);
+            }
         });
 
         TestRunner.Add("Cache: keys are stable and variant-sensitive", () =>
