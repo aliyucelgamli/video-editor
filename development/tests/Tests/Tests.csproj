@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Zero-dependency test runner (works offline, no NuGet needed).
+    Run with test.bat at the repository root.
+    Can be migrated to xUnit later without touching production code.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>VideoEditor.Tests</AssemblyName>
+    <RootNamespace>VideoEditor.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Domain\Domain.csproj" />
+    <ProjectReference Include="..\..\src\Application\Application.csproj" />
+    <ProjectReference Include="..\..\src\ProjectIO\ProjectIO.csproj" />
+  </ItemGroup>
+
+</Project>

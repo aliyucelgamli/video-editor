@@ -1,0 +1,20 @@
+# Build outputs
+bin/
+obj/
+build/
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# Runtime artifacts
+logs/
+cache/thumbnails/*
+cache/waveform/*
+cache/proxy/*
+cache/preview/*
+!cache/**/.gitkeep
+
+# Autosave files
+*.autosave

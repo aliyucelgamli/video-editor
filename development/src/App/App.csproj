@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Allows compiling this WPF project on non-Windows build agents. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>VideoEditor</AssemblyName>
+    <RootNamespace>VideoEditor.App</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\Domain.csproj" />
+    <ProjectReference Include="..\Application\Application.csproj" />
+    <ProjectReference Include="..\ProjectIO\ProjectIO.csproj" />
+  </ItemGroup>
+
+</Project>
