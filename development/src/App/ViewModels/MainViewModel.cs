@@ -82,7 +82,8 @@ public class MainViewModel : ObservableObject
         var compositor = new FrameCompositor(new FrameExtractor(_ffmpeg), new VideoEffectPipeline(_catalog));
         _exporter = new ExportService(_ffmpeg, compositor, _catalog);
 
-        Preview = new PreviewViewModel(compositor, () => _projects.Current);
+        var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
+        Preview = new PreviewViewModel(compositor, () => _projects.Current, previewAudio);
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -120,7 +121,14 @@ public class MainViewModel : ObservableObject
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
 
         RebuildFromModel();
+
+        if (FfmpegMissing)
+            StatusText = "FFmpeg not found — preview, thumbnails, waveforms and export are disabled. " +
+                         "Install FFmpeg and add it to PATH (or put it in tools\\ffmpeg\\).";
     }
+
+    /// <summary>True when ffmpeg/ffprobe could not be located — media features are off.</summary>
+    public bool FfmpegMissing => !_ffmpeg.IsAvailable;
 
     public PreviewViewModel Preview { get; }
     public EffectsPanelViewModel Effects { get; }
@@ -726,6 +734,36 @@ public class MainViewModel : ObservableObject
         StatusText = $"Moved '{evt.Name}' to {FormatTime(newStart)}";
     }
 
+    /// <summary>
+    /// Time-stretches an event (Shift + edge drag): new timeline span, same
+    /// source range, adjusted playback rate. Linked partners that share the
+    /// same span are stretched with it so A/V stays in sync.
+    /// </summary>
+    public void StretchEvent(Guid eventId, double newStart, double newDuration)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        newDuration = Math.Max(StretchEventCommand.MinDuration, newDuration);
+        if (Math.Abs(newStart - evt.Start) < 0.0005 && Math.Abs(newDuration - evt.Duration) < 0.0005) return;
+
+        var stretch = new StretchEventCommand(evt, newStart, newDuration);
+        var commands = new List<IEditorCommand> { stretch };
+
+        if (evt.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked &&
+            Math.Abs(linked.Event.Start - evt.Start) < 0.001 &&
+            Math.Abs(linked.Event.Duration - evt.Duration) < 0.001)
+        {
+            commands.Add(new StretchEventCommand(linked.Event, newStart, newDuration));
+        }
+
+        _selectedEventId = eventId;
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Stretch '{evt.Name}'", commands));
+        StatusText = $"Stretched '{evt.Name}' to {newDuration:0.##}s ({stretch.NewRate:0.##}x speed)";
+    }
+
     // ---------- Selection ----------
 
     public void SelectEvent(Guid? eventId)
@@ -744,12 +782,14 @@ public class MainViewModel : ObservableObject
     {
         if (_selectedEventId is not Guid id) return null;
         if (_projects.Current.FindEvent(id) is not { } found) return null;
-
-        var contentType = found.Track.Type == TrackType.Audio
-            ? MediaType.Audio
-            : _projects.Current.Media.FindById(found.Event.MediaId)?.Type ?? MediaType.Video;
-        return new SelectedEventContext(found.Event, found.Track, contentType);
+        return new SelectedEventContext(found.Event, found.Track, ContentTypeOf(found.Event, found.Track));
     }
+
+    /// <summary>What kind of content an event carries, based on its track and source media.</summary>
+    private MediaType ContentTypeOf(TimelineEvent evt, Track track) =>
+        track.Type == TrackType.Audio
+            ? MediaType.Audio
+            : _projects.Current.Media.FindById(evt.MediaId)?.Type ?? MediaType.Video;
 
     private void RefreshSelectionPanels()
     {
@@ -763,7 +803,12 @@ public class MainViewModel : ObservableObject
 
     private void DeleteSelected()
     {
-        if (_selectedEventId is not Guid id) return;
+        if (_selectedEventId is Guid id) DeleteEvent(id);
+    }
+
+    /// <summary>Deletes an event (and its linked partner) — used by Del and the context menu.</summary>
+    public void DeleteEvent(Guid id)
+    {
         if (_projects.Current.FindEvent(id) is not { } found) return;
 
         var commands = new List<IEditorCommand> { new RemoveEventCommand(found.Track, found.Event) };
@@ -843,19 +888,48 @@ public class MainViewModel : ObservableObject
             oldValue, newValue, v => target.Volume = v));
     }
 
-    // ---------- Effects (drop target support) ----------
+    // ---------- Effects on events (drop target, fx button, context menu) ----------
 
-    /// <summary>Applies an effect dragged from the panel onto an event block.</summary>
+    /// <summary>Applies an effect to an event (drag &amp; drop, fx button or context menu).</summary>
     public void ApplyEffectToEvent(string effectId, Guid eventId)
     {
         if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        SelectEvent(eventId);
+        Effects.ApplyEffect(effectId, found.Event, found.Track, ContentTypeOf(found.Event, found.Track));
+    }
 
-        var contentType = found.Track.Type == TrackType.Audio
-            ? MediaType.Audio
-            : _projects.Current.Media.FindById(found.Event.MediaId)?.Type ?? MediaType.Video;
+    /// <summary>Effects that can attach to the given event (feeds the fx menu).</summary>
+    public IReadOnlyList<EffectDefinitionViewModel> GetCompatibleEffects(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found)
+            return Array.Empty<EffectDefinitionViewModel>();
+
+        var contentType = ContentTypeOf(found.Event, found.Track);
+        return _catalog.All
+            .Where(definition => definition.CanApplyTo(contentType))
+            .Select(definition => new EffectDefinitionViewModel(definition))
+            .ToList();
+    }
+
+    public bool EventHasEffects(Guid eventId) =>
+        _projects.Current.FindEvent(eventId)?.Event.Effects.Count > 0;
+
+    /// <summary>Removes the whole effect chain of an event as one undo step.</summary>
+    public void RemoveAllEffects(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        if (found.Event.Effects.Count == 0) return;
+
+        var commands = found.Event.Effects
+            .Select(instance => (IEditorCommand)new RemoveEffectCommand(
+                found.Event.Effects, instance, _catalog.Find(instance.Type)?.Name ?? instance.Type))
+            .ToList();
 
         SelectEvent(eventId);
-        Effects.ApplyEffect(effectId, found.Event, found.Track, contentType);
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Remove all effects from '{found.Event.Name}'", commands));
+        StatusText = $"Removed {commands.Count} effect(s) from '{found.Event.Name}'";
     }
 
     // ---------- Tracks ----------

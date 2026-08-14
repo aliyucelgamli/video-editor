@@ -52,8 +52,9 @@ public class FrameCompositor
                     .ConfigureAwait(false);
                 if (frame is null) continue;
 
-                _effects.Apply(frame.Bgra, frame.Width, frame.Height, evt.Effects);
-                _effects.Apply(frame.Bgra, frame.Width, frame.Height, track.Effects);
+                // Event effects animate on clip-local time, track effects on timeline time.
+                _effects.Apply(frame.Bgra, frame.Width, frame.Height, evt.Effects, time - evt.Start);
+                _effects.Apply(frame.Bgra, frame.Width, frame.Height, track.Effects, time);
 
                 var opacity = Math.Clamp(evt.Opacity, 0, 1) *
                               Math.Clamp(track.Opacity, 0, 1) *

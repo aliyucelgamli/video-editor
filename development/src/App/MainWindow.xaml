@@ -119,6 +119,7 @@
                     MouseLeftButtonDown="EventBlock_MouseLeftButtonDown"
                     MouseMove="EventBlock_MouseMove"
                     MouseLeftButtonUp="EventBlock_MouseLeftButtonUp"
+                    MouseRightButtonUp="EventBlock_MouseRightButtonUp"
                     LostMouseCapture="EventBlock_LostMouseCapture">
                 <Border.Style>
                     <Style TargetType="Border">
@@ -174,6 +175,14 @@
                                        FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </DockPanel>
+
+                    <!-- fx button (bottom-right, VEGAS-style): opens the effect picker -->
+                    <Button Width="22" Height="15" FontSize="9" FontWeight="Bold"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Margin="0,0,3,3" Content="fx" Foreground="#FFFFD54F"
+                            Style="{StaticResource TrackToggle}"
+                            Click="EventFx_Click"
+                            ToolTip="Add an effect to this clip"/>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -603,10 +612,15 @@
                             </StackPanel.Style>
                             <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="42"
                                        Foreground="#FF262B36" HorizontalAlignment="Center"/>
-                            <TextBlock Text="Click the timeline to preview a frame" Foreground="#FF4A5160" FontSize="13"
+                            <TextBlock Text="Click a clip or the timeline to preview a frame"
+                                       Foreground="#FF4A5160" FontSize="13"
                                        Margin="0,12,0,2" HorizontalAlignment="Center"/>
-                            <TextBlock Text="Space plays, the ruler scrubs (FFmpeg required)"
+                            <TextBlock Text="Space plays with sound, the ruler scrubs"
                                        Foreground="#FF343B49" FontSize="11" HorizontalAlignment="Center"/>
+                            <TextBlock Text="⚠ FFmpeg not found — preview and export are disabled.&#10;Install FFmpeg and add it to PATH, or copy it into tools\ffmpeg\."
+                                       Foreground="#FFE0A03C" FontSize="11" Margin="0,14,0,0"
+                                       TextAlignment="Center" HorizontalAlignment="Center"
+                                       Visibility="{Binding FfmpegMissing, Converter={StaticResource BoolToVis}}"/>
                         </StackPanel>
 
                         <!-- Transport -->

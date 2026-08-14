@@ -62,6 +62,39 @@ public static class TimelineModelTests
             Assert.True(project.ExportRange is null, "undo set");
         });
 
+        TestRunner.Add("Stretch: shorter duration speeds playback up, undo restores", () =>
+        {
+            var undo = new UndoRedoService();
+            // 10 s of source shown over 10 s of timeline at 1x.
+            var evt = new TimelineEvent
+            {
+                Name = "clip", Start = 5, Duration = 10, SourceIn = 0, SourceOut = 10, PlaybackRate = 1.0
+            };
+
+            // Shift-drag the right edge in: 10 s of source in 5 s → 2x speed.
+            undo.ExecuteCommand(new StretchEventCommand(evt, newStart: 5, newDuration: 5));
+            Assert.Close(5, evt.Duration, "shortened duration");
+            Assert.Close(2.0, evt.PlaybackRate, "doubled speed");
+            Assert.Close(10, evt.SourceOut, "source untouched (non-destructive)");
+
+            // Stretch out to 20 s → 0.5x slow motion.
+            undo.ExecuteCommand(new StretchEventCommand(evt, newStart: 5, newDuration: 20));
+            Assert.Close(0.5, evt.PlaybackRate, "half speed");
+
+            undo.Undo();
+            Assert.Close(2.0, evt.PlaybackRate, "undo second stretch");
+            undo.Undo();
+            Assert.Close(1.0, evt.PlaybackRate, "undo first stretch");
+            Assert.Close(10, evt.Duration, "original duration restored");
+        });
+
+        TestRunner.Add("Stretch: duration clamps to the minimum", () =>
+        {
+            var evt = new TimelineEvent { Name = "clip", Duration = 4, SourceOut = 4 };
+            new StretchEventCommand(evt, 0, 0.001).Execute();
+            Assert.Close(StretchEventCommand.MinDuration, evt.Duration, "clamped duration");
+        });
+
         TestRunner.Add("Linked events: composite move keeps A/V in sync", () =>
         {
             var undo = new UndoRedoService();

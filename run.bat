@@ -9,9 +9,19 @@ set "SDKFOUND="
 for /f "delims=" %%i in ('dotnet --list-sdks 2^>nul') do set SDKFOUND=1
 if not defined SDKFOUND goto :nosdk
 
-echo Video Editor baslatiliyor (ilk calistirma 1-2 dakika surebilir)...
+echo [1/2] Derleniyor (degisiklik yoksa bu adim saniyeler surer)...
+dotnet build development\src\App\App.csproj --nologo -v minimal
+if not "%errorlevel%"=="0" (
+    echo.
+    echo [HATA] Derleme basarisiz. Yukaridaki hata mesajini kopyalayip Claude'a gonderin.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [2/2] Video Editor baslatiliyor...
 echo.
-dotnet run --project development\src\App\App.csproj
+dotnet run --project development\src\App\App.csproj --no-build
 if not "%errorlevel%"=="0" (
     echo.
     echo [HATA] Uygulama baslatilamadi. Yukaridaki hata mesajini kopyalayip Claude'a gonderin.

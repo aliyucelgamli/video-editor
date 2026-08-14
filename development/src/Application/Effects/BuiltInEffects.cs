@@ -48,6 +48,11 @@ public static class BuiltInEffects
             "Darkens the corners for a cinematic frame.",
             Param("amount", "Amount", 0, 1, 0.5)),
 
+        Visual("glitch", "Glitch", "Stylize",
+            "Digital glitch: jumping band displacement with RGB splitting.",
+            Param("amount", "Amount", 0, 1, 0.5),
+            Param("speed", "Speed", 1, 30, 12, "hz")),
+
         // ---------- Audio ----------
         Audio("helium", "pitch", "Helium Voice", "Voice",
             "Raises the pitch like inhaled helium.",

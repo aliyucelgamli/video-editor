@@ -44,7 +44,7 @@ public class MediaEnrichmentService
                     var info = await _probe.ProbeAsync(captured.FilePath);
                     if (info is null) return;
 
-                    _dispatcher.BeginInvoke(() =>
+                    _ = _dispatcher.BeginInvoke(() => // fire-and-forget UI callback
                     {
                         ApplyInfo(captured, info);
                         StretchPlaceholderEvents(project, captured, placeholderDuration);

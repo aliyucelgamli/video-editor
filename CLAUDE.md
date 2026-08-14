@@ -1,13 +1,14 @@
 # CLAUDE.md — Video Editor
 
-AI geliştirme rehberi. Her oturumda önce bu dosyayı, sonra `VEGAS_EDITOR_REFERENCE.md`'yi oku.
-(Guidance for AI sessions working on this repo. Read this first, then `VEGAS_EDITOR_REFERENCE.md`.)
+Guidance for AI sessions working on this repository. Read this first, then
+`vefx.md` (effect authoring) and `VEGAS_EDITOR_REFERENCE.md` (UX/editing model).
 
 ## What this is
 
 A Windows desktop **non-destructive video/audio editor** inspired by Sony VEGAS Pro:
 Media Library → drag & drop → Track/Event timeline → preview → effects → MP4 export.
-Source media files are NEVER modified; the project (`.veproj`) stores references + edit state only.
+Source media files are NEVER modified; the project file (`.veproj`) stores references
+plus edit state only.
 
 ## Environment rules (critical — do not break these)
 
@@ -15,35 +16,40 @@ Source media files are NEVER modified; the project (`.veproj`) stores references
 - **Zero NuGet packages.** No `PackageReference` anywhere. The cloud dev sandbox has no NuGet
   access, and the app must stay lightweight. Tests use a custom zero-dependency runner
   (`tests/Tests/TestRunner.cs`), not xUnit.
-- `EnableWindowsTargeting` lives ONLY in `App.csproj` (putting it in Directory.Build.props breaks
-  offline restore of the class libraries).
+- `EnableWindowsTargeting` lives ONLY in `App.csproj` (putting it in Directory.Build.props
+  breaks offline restore of the class libraries).
 - Domain / Application / ProjectIO / MediaEngine / Tests compile and run on Linux;
-  **the WPF App compiles only on the user's Windows machine** (`run.bat`). When editing App code
-  without being able to compile it, be extra careful with WPF API usage.
-- **FFmpeg is an external process**, not a library. Everything media-related must degrade
+  **the WPF App compiles only on the user's Windows machine** (`run.bat`). When editing App
+  code without being able to compile it, be extra careful with WPF API usage.
+- **FFmpeg is an external process**, not a library. Every media feature must degrade
   gracefully when ffmpeg/ffprobe are missing (`FFmpegLocator.IsAvailable`).
-- Repo root on the user's machine: `C:\Projects\VideoEditor`. `run.bat` / `test.bat` / `build.bat`
-  at the root. `build.bat` publishes a self-contained `build\VideoEditor.exe`.
+- Repo root on the user's machine: `C:\Projects\VideoEditor`. Root scripts:
+  - `run.bat` — incremental build first (skips fast when nothing changed, shows compiler
+    errors), then starts the app with `--no-build`.
+  - `test.bat` — runs the test suite. `build.bat` — publishes a self-contained
+    `build\VideoEditor.exe`.
 
 ## Project structure
 
 ```
 development/
   src/
-    Domain/        Pure model. No dependencies. Project, Track, TimelineEvent, MediaItem,
+    Domain/        Pure model, no dependencies. Project, Track, TimelineEvent, MediaItem,
                    TimeRange (export range), VolumeLimits, Effects/ (EffectDefinition,
                    EffectStep, EffectTarget, IEffectCatalog). Time unit: double seconds.
     Application/   Use cases. Commands (IEditorCommand + undo/redo), ProjectService,
-                   Effects/ (EffectCatalog + BuiltInEffects + UserEffectLibrary).
+                   Effects/ (EffectCatalog, BuiltInEffects, UserEffectLibrary).
                    Depends only on Domain.
     ProjectIO/     Persistence. JsonProjectSerializer (.veproj), VefxSerializer (.vefx).
-    MediaEngine/   FFmpeg integration. Depends only on Domain. Probe, thumbnails, waveform
-                   peaks, frame extraction, FrameCompositor, video kernels (CPU "shaders"),
-                   AudioFilterGraphBuilder (ffmpeg filters), ExportService. Fully async.
+    MediaEngine/   FFmpeg integration; depends only on Domain. Probe, thumbnails, waveform
+                   peaks, frame extraction, FrameCompositor, video kernels (CPU "shaders",
+                   including time-varying ones like glitch), AudioFilterGraphBuilder
+                   (ffmpeg filters), ExportService. Fully async.
     App/           WPF (MVVM). ViewModels + Services (TimelineVisualsService,
                    MediaEnrichmentService) + XAML. No FFmpeg calls in views/viewmodels —
                    always go through MediaEngine services.
-  tests/Tests/     Zero-dependency test suite (43 tests). Run: test.bat / dotnet run.
+  tests/Tests/     Zero-dependency test suite (46 tests). Run: test.bat / dotnet run.
+examples/          Tiny test assets (1080p clips, 64×64 images) for drag & drop testing.
 user/              User-editable assets (effects/*.vefx, templates, fonts, exports…).
                    NEVER deleted by updates.
 cache/             Regenerable artifacts (thumbnails, waveform peaks, preview, proxy).
@@ -52,103 +58,126 @@ projects/          Default location for .veproj files.
 ```
 
 Dependency direction (never reverse it):
-`App → {Application, ProjectIO, MediaEngine} → Domain`. MediaEngine must not reference Application.
+`App → {Application, ProjectIO, MediaEngine} → Domain`. MediaEngine must not reference
+Application.
 
 ## Architecture rules
 
 1. **Command pattern for every edit.** Any change to the project model goes through an
    `IEditorCommand` executed by `UndoRedoService`. Multi-part operations (linked A/V pairs,
-   import+place) are wrapped in one `CompositeCommand`. For simple value changes use the generic
-   `SetValueCommand<T>` — do not add one-off command classes for single properties.
-2. **Slider pattern:** live-drag writes the model directly (for instant preview) and notifies;
+   import + place) are wrapped in one `CompositeCommand`. For simple value changes use the
+   generic `SetValueCommand<T>` — do not add one-off command classes per property.
+2. **Slider pattern:** live-drag writes the model directly (instant preview) and notifies;
    ONE undoable command is issued on mouse release (`BeginEdit`/`EndEdit`). See
    `EffectParameterViewModel`, `TrackViewModel.VolumePercent`.
-3. **Preview == export.** Both run through `FrameCompositor` + `VideoEffectPipeline`. Never add
-   preview-only composition logic that export doesn't share.
+3. **Preview == export.** Both run through `FrameCompositor` + `VideoEffectPipeline`.
+   Never add preview-only composition logic export doesn't share. Time-varying kernels get
+   the hidden `__time` argument injected by the pipeline and must be deterministic
+   (same time + args ⇒ same pixels).
 4. **Async everything heavy.** FFmpeg runs via `ProcessRunner` (async, cancellable). The UI
-   thread never waits on media work. UI callbacks are marshalled through the Dispatcher
-   (see `TimelineVisualsService`).
-5. **Caching:** cache keys come from `CachePaths.KeyFor(path, variantParts…)` and include the
-   source file's mtime, so entries self-invalidate. Cache writes are best-effort.
-6. **Linked audio/video:** dropping a video with audio creates a video event + an audio event
-   cross-linked via `LinkedEventId`; move/delete operate on both (composite commands).
-   Splitting linked pairs must split both (SplitEventCommand handles rate-aware source mapping).
+   thread never waits on media work; UI callbacks are marshalled through the Dispatcher.
+   Intentional fire-and-forget calls are discarded explicitly (`_ = …`) with a comment —
+   the build must stay warning-free.
+5. **Caching:** cache keys come from `CachePaths.KeyFor(path, variantParts…)` and include
+   the source file's mtime, so entries self-invalidate. Cache writes are best-effort.
+6. **Linked audio/video:** dropping a video with audio creates a video event + an audio
+   event cross-linked via `LinkedEventId`; move/delete/stretch operate on both via
+   composite commands.
+7. **Timeline interactions** (code-behind `MainWindow.xaml.cs`, logic in `MainViewModel`):
+   drag = move (with snap), **Shift + edge drag = time stretch** (duration changes,
+   `PlaybackRate = sourceSpan / duration`, source range untouched), fx button
+   (bottom-right of every clip) and right-click menu = attach effects / remove effects /
+   delete. Effects can also be dragged from the panel or double-clicked.
 
 ## Effect system (the core extension point)
 
-An **EffectDefinition** is pure data: id, name, category, `EffectTarget` flags
-(video/audio/image), parameter definitions (min/max/default) and a list of **EffectSteps**.
-A step = a **kernel** name + args, where an arg is a literal (`"3"`) or a parameter reference
-(`"$strength"`). Built-in effects and imported `.vefx` files use the exact same shape —
-downstream code never distinguishes them.
+See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 
-- **Video kernels** (`MediaEngine/Effects/*Kernels.cs`) are CPU pixel routines (`IVideoKernel`,
-  BGRA in-place): grayscale, sepia, temperature (warm/cold), brightness, contrast, saturation,
-  invert, blur, vignette. Register new ones in `VideoEffectPipeline.CreateDefaultKernels()`.
-- **Audio kernels** map to FFmpeg filters in `AudioFilterGraphBuilder`: `pitch`
-  (asetrate+aresample+atempo — used by Helium & Deep Voice), `echo` (aecho), `gain` (volume).
-- **EffectInstance** (on events/tracks) stores only `Type` (= definition id) + parameter values +
-  Enabled. `EffectCatalog` resolves ids; user `.vefx` files can override built-in ids.
-- **.vefx format** (`VefxSerializer`, format v1): JSON
-  `{ "formatVersion": 1, "effect": { id, name, category, description, targets, parameters, steps } }`.
-  Files live in `user/effects/` and load at startup; import copies the file there.
-  Examples: `user/effects/vhs-look.vefx`, `robot-voice.vefx`, `dream-look.vefx`.
-- Adding a new effect: data-only composite → just author a `.vefx`. New processing capability →
-  add a kernel (+ tests) and expose it via a built-in definition or `.vefx`.
+- An `EffectDefinition` is pure data: id, targets (video/audio/image flags), parameters
+  (min/max/default sliders) and **steps** — kernel calls whose args are literals or
+  `"$parameter"` references. Built-ins and imported `.vefx` files share this shape.
+- **Video kernels** (`MediaEngine/Effects/`): grayscale, sepia, temperature, brightness,
+  contrast, saturation, invert, blur, vignette, glitch (time-varying). New kernels are
+  registered in `VideoEffectPipeline.CreateDefaultKernels()` and documented in `vefx.md`.
+- **Audio kernels** map to FFmpeg filters in `AudioFilterGraphBuilder`: pitch (helium /
+  deep voice), echo, gain.
+- `.vefx` files live in `user/effects/`, load at startup, import via panel button or
+  drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-14)
+## Feature state (2026-08-14, round 4)
 
-Done: project model + .veproj; undo/redo commands; timeline UI (zoom, scroll-sync, selection,
-drag-move with snap); Explorer/library drag & drop; linked A/V import; ffprobe enrichment (real
-durations); library thumbnails; event film strips + audio waveforms; playhead + click/drag scrub;
-preview monitor (ffmpeg frame compose at ≤640px) with Space play (video-only, no audio playback);
-effect system + Effects panel (drag onto clips, parameter sliders, enable/remove); .vefx
-import/export; event & track volume 0–200%; yellow export range bars (I/O keys + draggable);
-MP4 H.264+AAC export of range or full project with progress/cancel. 43 tests green.
+Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
+drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
+import; ffprobe enrichment; library thumbnails; film strips + waveforms on events; playhead +
+scrub; preview monitor (Space play, video-only); effect system + Effects panel + **fx button
+and right-click menu on clips**; `.vefx` import/export + `vefx.md` guide; time-varying
+kernel support + glitch; event & track volume 0–200%; yellow export range bars (I/O keys,
+draggable); MP4 export (range or full) with progress/cancel; run.bat build-first flow.
+46 tests green.
 
-Not done yet (next steps, roughly in order):
-1. Trim (drag event edges) + slip; 2. Split at playhead (S/X) — command exists, UI missing;
-3. T = unlink A/V; 4. Audio playback in preview (needs a WAV pipeline or WASAPI interop — no NuGet);
-5. Fade handles UI; 6. Text events; 7. Keyframe UI; 8. Track FX UI (model supports it);
-9. Proxy/preview cache; 10. Customizable shortcuts; 11. IDialogService (get MessageBox out of VMs);
-12. Timeline virtualization for 1000+ events.
+Not done yet (roughly in order):
+1. Trim without rate change (plain edge drag = trim, VEGAS-style) + slip;
+2. Split at playhead (S/X) — command exists, UI missing; 3. T = unlink A/V;
+4. Audio playback in preview (WAV pipeline or WASAPI interop — no NuGet);
+5. Fade handle UI; 6. Text events; 7. Keyframe UI; 8. Track FX UI (model ready);
+9. Proxy/preview cache; 10. Customizable shortcuts; 11. IDialogService (get MessageBox
+out of VMs); 12. Timeline virtualization for 1000+ events; 13. Dark ContextMenu styling.
 
 ## Coding conventions
 
-- C# latest, nullable enabled, implicit usings. File-scoped namespaces. 4-space indent.
+Based on the Microsoft C# coding conventions, adapted to this codebase:
+
+- C# latest, nullable enabled, implicit usings, file-scoped namespaces, 4-space indent.
 - One public type per file; file name = type name. Folders = namespaces
   (`VideoEditor.MediaEngine.Effects` ↔ `src/MediaEngine/Effects/`).
-- Naming: `_camelCase` private fields, `PascalCase` members, `camelCase` locals/params.
-  Constants `PascalCase`. Async methods end in `Async`.
-- Prefer `sealed` for kernel/leaf classes; records for immutable data (`MediaInfo`, `RawFrame`).
-- Every public type/member that isn't self-evident gets a short `<summary>` explaining *why*,
-  not *what*. Comments explain intent and non-obvious decisions only.
-- Culture: all number formatting/parsing that reaches FFmpeg or files uses
+- Naming: `_camelCase` private fields, `PascalCase` types/members/constants,
+  `camelCase` locals and parameters, `Async` suffix on async methods, `I` prefix on
+  interfaces. No abbreviations (`definition`, not `def`) except well-known ones (`evt`
+  is used for `TimelineEvent` to avoid the `event` keyword).
+- Prefer: expression-bodied members for one-liners; pattern matching (`is { } x`,
+  switch expressions) over null checks and if-chains; `sealed` for leaf classes;
+  records for immutable data (`MediaInfo`, `RawFrame`, `ProcessResult`).
+- Culture: every number that reaches FFmpeg, file formats or logs uses
   `CultureInfo.InvariantCulture` (`0.###`).
-- XAML: styles live in `App.xaml` (dark theme). Reuse `ToolButton`, `FlatSlider`, `FlatCheckBox`,
-  `SideTabControl`, etc. XML comments must not contain `--`.
+- XAML: shared styles in `App.xaml` (dark theme) — reuse `ToolButton`, `FlatSlider`,
+  `FlatCheckBox`, `SideTabControl`, `FlatProgressBar`. XML comments must not contain `--`.
 - Segoe MDL2 glyphs in C# as `"\uE767"` escapes (never raw PUA characters).
+- Warnings are errors in spirit: the build must be warning-clean. Un-awaited calls that
+  are intentionally fire-and-forget use `_ =` discards with a short comment.
 
 ## Clean code principles (enforced in review)
 
-- **SOLID:** single responsibility per class (locator ≠ runner ≠ probe ≠ compositor);
-  depend on abstractions across layers (`IEffectCatalog`, `IProjectSerializer`,
-  `IEffectFileReader` let outer layers plug into inner ones); open/closed via kernels + .vefx.
-- **DRY:** shared logic gets one home (`VolumeLimits`, `SetValueCommand<T>`, `KernelArgs`,
-  `CachePaths.KeyFor`). If you copy-paste a third time, extract.
-- Small units: methods ≲ 40 lines, classes ≲ 300 lines; split view models before they bloat
-  (MainViewModel delegates to PreviewViewModel / EffectsPanelViewModel).
-- No global mutable state; services are constructed in one place (MainViewModel ctor for now).
-- Fail soft in cosmetic paths (thumbnails/waveforms swallow errors), fail loud in data paths
-  (project IO and export throw with friendly messages; raw ffmpeg stderr only in details/logs).
-- Guard clauses over nesting; early returns preferred.
-- Tests for every non-UI behavior change; keep `test.bat` green — the suite must run without
-  ffmpeg too (integration tests self-skip).
+- **SOLID**
+  - *Single responsibility:* one reason to change per class — locator ≠ runner ≠ probe ≠
+    compositor ≠ exporter; view models delegate (Main → Preview/EffectsPanel).
+  - *Open/closed:* extend via kernels + `.vefx` + commands, don't modify working systems.
+  - *Liskov:* kernels and commands are interchangeable through their interfaces; no
+    type-checking consumers.
+  - *Interface segregation:* small contracts (`IEditorCommand`, `IVideoKernel`,
+    `IEffectFileReader`) instead of god-interfaces.
+  - *Dependency inversion:* outer layers depend on Domain abstractions
+    (`IEffectCatalog`, `IProjectSerializer`); Domain depends on nothing.
+- **DRY:** shared logic gets one home (`VolumeLimits`, `SetValueCommand<T>`,
+  `KernelArgs`, `CachePaths.KeyFor`, `ContentTypeOf`). Extract on the second copy-paste.
+- **Small units:** methods ≲ 40 lines, classes ≲ 300 lines; guard clauses and early
+  returns over nesting; no boolean-parameter traps (use enums like `EventDragMode`).
+- **Meaningful names over comments;** comments explain *why* and non-obvious decisions,
+  never restate code.
+- **Error strategy:** fail soft in cosmetic paths (thumbnails/waveforms swallow and log),
+  fail loud in data paths (project IO and export throw with a friendly message; raw
+  ffmpeg stderr only in details/logs, `logs/app.log`).
+- **No global mutable state.** Services are constructed in one composition root
+  (MainViewModel ctor for now — extract a bootstrapper when it grows).
+- **Tests with every behavior change.** Non-UI logic must be covered; the suite runs
+  without ffmpeg too (integration tests self-skip). Keep `test.bat` green.
 
 ## Workflow for changes
 
-1. Read `claude/DURUM.md` (project memory) and this file.
-2. Plan smallest clean change; touch only affected modules; don't rewrite working systems.
-3. Libraries + tests compile/run on Linux (`dotnet run --project development/tests/Tests/Tests.csproj`).
-4. WPF changes: write carefully, user compiles with `run.bat` and pastes errors back.
-5. Update tests, this file's "Feature state", and `claude/DURUM.md` when a feature lands.
+1. Read `claude/DURUM.md` (project memory), this file, and `vefx.md` when effects are involved.
+2. Track work as small steps; implement one step at a time — never a big-bang rewrite.
+3. Libraries + tests compile/run on Linux
+   (`dotnet run --project development/tests/Tests/Tests.csproj`).
+4. WPF changes: write carefully; the user compiles with `run.bat` (build-first) and
+   pastes errors back.
+5. When a feature lands: update tests, the "Feature state" section above, and
+   `claude/DURUM.md`.

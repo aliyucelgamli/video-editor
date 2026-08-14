@@ -100,6 +100,39 @@ public static class MediaEngineTests
             Assert.True(frame[1] > 60 && frame[1] < 160, "invert skipped");
         });
 
+        TestRunner.Add("Glitch: deterministic per time, animates across time", () =>
+        {
+            var catalog = new EffectCatalog();
+            var pipeline = new VideoEffectPipeline(catalog);
+            var glitch = catalog.Find("glitch")!.CreateInstance();
+            glitch.Parameters["amount"] = 1.0;
+
+            byte[] MakeFrame()
+            {
+                var frame = new byte[32 * 32 * 4];
+                for (var i = 0; i < frame.Length; i += 4)
+                {
+                    frame[i] = (byte)(i % 251);
+                    frame[i + 2] = (byte)(i % 127);
+                    frame[i + 3] = 255;
+                }
+                return frame;
+            }
+
+            var a = MakeFrame();
+            var b = MakeFrame();
+            var c = MakeFrame();
+            var original = MakeFrame();
+
+            pipeline.Apply(a, 32, 32, new[] { glitch }, timeSeconds: 0.4);
+            pipeline.Apply(b, 32, 32, new[] { glitch }, timeSeconds: 0.4);
+            pipeline.Apply(c, 32, 32, new[] { glitch }, timeSeconds: 2.7);
+
+            Assert.True(a.SequenceEqual(b), "same time → identical frame (deterministic)");
+            Assert.False(a.SequenceEqual(original), "glitch changes the frame");
+            Assert.False(a.SequenceEqual(c), "different time → different glitch pattern");
+        });
+
         TestRunner.Add("Audio filters: helium builds pitch chain, volume applied", () =>
         {
             var catalog = new EffectCatalog();

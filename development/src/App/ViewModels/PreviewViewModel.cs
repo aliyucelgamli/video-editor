@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
+using VideoEditor.App.Services;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Frames;
 
@@ -10,8 +11,9 @@ namespace VideoEditor.App.ViewModels;
 
 /// <summary>
 /// Drives the preview monitor: renders the composed frame at the playhead and
-/// runs the play loop. Rendering is throttled — a newer request cancels the
-/// one in flight, so scrubbing stays responsive.
+/// runs the play loop (with mixed timeline audio when available). Rendering is
+/// throttled — a newer request cancels the one in flight, so scrubbing stays
+/// responsive.
 /// </summary>
 public class PreviewViewModel : ObservableObject
 {
@@ -19,6 +21,7 @@ public class PreviewViewModel : ObservableObject
 
     private readonly FrameCompositor _compositor;
     private readonly Func<Project> _getProject;
+    private readonly PreviewAudioService? _audio;
 
     private WriteableBitmap? _bitmap;
     private ImageSource? _currentFrame;
@@ -27,10 +30,12 @@ public class PreviewViewModel : ObservableObject
     private double _playheadTime;
     private long _renderStamp;
 
-    public PreviewViewModel(FrameCompositor compositor, Func<Project> getProject)
+    public PreviewViewModel(
+        FrameCompositor compositor, Func<Project> getProject, PreviewAudioService? audio = null)
     {
         _compositor = compositor;
         _getProject = getProject;
+        _audio = audio;
         PlayPauseCommand = new RelayCommand(TogglePlay);
         StopCommand = new RelayCommand(Stop);
     }
@@ -100,7 +105,12 @@ public class PreviewViewModel : ObservableObject
 
     public void TogglePlay()
     {
-        if (IsPlaying) { IsPlaying = false; return; }
+        if (IsPlaying)
+        {
+            IsPlaying = false;
+            _audio?.Stop();
+            return;
+        }
 
         var duration = _getProject().Duration;
         if (duration <= 0.01) return;
@@ -113,6 +123,7 @@ public class PreviewViewModel : ObservableObject
     public void Stop()
     {
         IsPlaying = false;
+        _audio?.Stop();
         Seek(0);
     }
 
@@ -121,6 +132,19 @@ public class PreviewViewModel : ObservableObject
         var project = _getProject();
         var (width, height) = PreviewSize(project);
         var origin = _playheadTime;
+
+        // Mix and start the timeline audio first, then run the video clock in
+        // step with it. Failure (no audio events, no ffmpeg) = silent playback.
+        if (_audio != null)
+        {
+            await _audio.StartAsync(project, origin, CancellationToken.None);
+            if (!IsPlaying)
+            {
+                _audio.Stop(); // the user paused while audio was being prepared
+                return;
+            }
+        }
+
         var clock = Stopwatch.StartNew();
 
         while (IsPlaying)
@@ -130,6 +154,7 @@ public class PreviewViewModel : ObservableObject
             {
                 PlayheadTime = duration;
                 IsPlaying = false;
+                _audio?.Stop();
                 break;
             }
 
@@ -143,6 +168,7 @@ public class PreviewViewModel : ObservableObject
             catch
             {
                 IsPlaying = false;
+                _audio?.Stop();
                 break;
             }
         }

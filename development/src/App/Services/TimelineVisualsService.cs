@@ -55,7 +55,7 @@ public class TimelineVisualsService
                 var peaks = await _waveform.GetPeaksAsync(mediaPath, WaveformPeaksPerSecond);
                 if (peaks is null) return;
                 _peaks[mediaPath] = peaks;
-                _dispatcher.BeginInvoke(() => onReady(peaks));
+                _ = _dispatcher.BeginInvoke(() => onReady(peaks)); // fire-and-forget UI callback
             }
             catch { /* waveforms are cosmetic — never crash the UI */ }
             finally { _pendingPeaks.TryRemove(mediaPath, out _); }
@@ -83,7 +83,7 @@ public class TimelineVisualsService
             {
                 var path = await _thumbnails.GetThumbnailAsync(mediaPath, timeSeconds, ThumbnailPixelWidth);
                 if (path is null) return;
-                _dispatcher.BeginInvoke(() =>
+                _ = _dispatcher.BeginInvoke(() => // fire-and-forget UI callback
                 {
                     if (LoadImageCached(path) is { } image) onReady(image);
                 });
@@ -103,7 +103,7 @@ public class TimelineVisualsService
                 var paths = await _thumbnails.GetFilmstripAsync(
                     mediaPath, sourceIn, sourceOut, frameCount, ThumbnailPixelWidth);
                 if (paths.Count == 0) return;
-                _dispatcher.BeginInvoke(() =>
+                _ = _dispatcher.BeginInvoke(() => // fire-and-forget UI callback
                 {
                     var images = paths.Select(LoadImageCached).Where(i => i != null).Cast<ImageSource>().ToList();
                     if (images.Count > 0) onReady(images);
