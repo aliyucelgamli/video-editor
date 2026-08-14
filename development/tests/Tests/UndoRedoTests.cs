@@ -76,5 +76,20 @@ public static class UndoRedoTests
             Assert.Equal(0, trackB.Events.Count, "Target track after undo");
             Assert.Close(2, evt.Start, "Start after undo");
         });
+
+        TestRunner.Add("UndoRedo: track mute flag toggles and restores", () =>
+        {
+            var service = new UndoRedoService();
+            var track = new Track { Name = "A1", Type = TrackType.Audio };
+
+            service.ExecuteCommand(new SetTrackFlagCommand(track, SetTrackFlagCommand.TrackFlag.Muted, true));
+            Assert.True(track.Muted, "Muted after execute");
+
+            service.Undo();
+            Assert.False(track.Muted, "Muted after undo");
+
+            service.Redo();
+            Assert.True(track.Muted, "Muted after redo");
+        });
     }
 }
