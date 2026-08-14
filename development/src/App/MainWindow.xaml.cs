@@ -42,6 +42,23 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
         _viewModel.ZoomRequested += (_, factor) => ApplyZoom(factor, null);
+        _viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.PlayheadX)) KeepPlayheadVisible();
+        };
+    }
+
+    /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>
+    private void KeepPlayheadVisible()
+    {
+        if (!_viewModel.Preview.IsPlaying) return;
+        var viewport = LanesScroll.ViewportWidth;
+        if (viewport <= 0) return;
+
+        var x = _viewModel.PlayheadX;
+        var left = LanesScroll.HorizontalOffset;
+        if (x < left || x > left + viewport - 24)
+            LanesScroll.ScrollToHorizontalOffset(Math.Max(0, x - 48));
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -73,6 +90,15 @@ public partial class MainWindow : Window
     {
         if ((e.OriginalSource as FrameworkElement)?.DataContext is MediaItemViewModel item)
             _viewModel.AddMediaToTimelineEnd(item.Id);
+    }
+
+    /// <summary>Delete in the library removes the selected references (in-use assets are kept).</summary>
+    private void MediaList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete) return;
+        var ids = MediaList.SelectedItems.OfType<MediaItemViewModel>().Select(m => m.Id).ToList();
+        if (ids.Count > 0) _viewModel.RemoveMediaItems(ids);
+        e.Handled = true;
     }
 
     private void MediaLibrary_DragOver(object sender, DragEventArgs e)

@@ -10,10 +10,20 @@ public record RawFrame(byte[] Bgra, int Width, int Height);
 /// Extracts single frames from video/image files as raw BGRA using ffmpeg.
 /// Frames are letterboxed into the requested canvas size, so composition can
 /// blend them without further scaling.
+///
+/// A small LRU cache keeps recently extracted frames: re-rendering the same
+/// playhead position (typical while tweaking effect sliders) skips the
+/// expensive decode and responds in milliseconds. Callers receive a private
+/// copy, so applying effects in place never corrupts the cache.
 /// </summary>
 public class FrameExtractor
 {
+    private const int CacheCapacity = 24; // ~24 × 0.9 MB at 640×360 — bounded and cheap
+
     private readonly FFmpegLocator _locator;
+    private readonly object _cacheGate = new();
+    private readonly Dictionary<string, RawFrame> _cache = new();
+    private readonly LinkedList<string> _recency = new();
 
     public FrameExtractor(FFmpegLocator locator) => _locator = locator;
 
@@ -28,6 +38,21 @@ public class FrameExtractor
         width -= width % 2;
         height -= height % 2;
 
+        var key = FormattableString.Invariant($"{mediaPath}|{sourceTime:0.###}|{width}x{height}");
+        if (TryGetCached(key) is { } cached) return cached;
+
+        var frame = await DecodeFrameAsync(ffmpeg, mediaPath, sourceTime, width, height, cancellationToken)
+            .ConfigureAwait(false);
+        if (frame is null) return null;
+
+        StoreInCache(key, frame);
+        return Copy(frame);
+    }
+
+    private async Task<RawFrame?> DecodeFrameAsync(
+        string ffmpeg, string mediaPath, double sourceTime, int width, int height,
+        CancellationToken cancellationToken)
+    {
         var scale = $"scale={width}:{height}:force_original_aspect_ratio=decrease," +
                     $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black";
 
@@ -56,4 +81,35 @@ public class FrameExtractor
 
         return new RawFrame(bytes, width, height);
     }
+
+    // ---------- LRU cache ----------
+
+    private RawFrame? TryGetCached(string key)
+    {
+        lock (_cacheGate)
+        {
+            if (!_cache.TryGetValue(key, out var frame)) return null;
+            _recency.Remove(key);
+            _recency.AddFirst(key);
+            return Copy(frame);
+        }
+    }
+
+    private void StoreInCache(string key, RawFrame frame)
+    {
+        lock (_cacheGate)
+        {
+            if (_cache.ContainsKey(key)) return;
+            _cache[key] = frame;
+            _recency.AddFirst(key);
+            while (_cache.Count > CacheCapacity && _recency.Last is { } oldest)
+            {
+                _cache.Remove(oldest.Value);
+                _recency.RemoveLast();
+            }
+        }
+    }
+
+    private static RawFrame Copy(RawFrame frame) =>
+        new((byte[])frame.Bgra.Clone(), frame.Width, frame.Height);
 }

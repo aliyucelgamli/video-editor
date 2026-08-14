@@ -115,7 +115,26 @@ public static class FfmpegIntegrationTests
             Assert.True(frames >= 5, "streamed several consecutive frames");
         }
 
-        // 7) Real-time playback engine: playhead advances with the wall clock,
+        // 7) Frame cache: repeated extraction at the same position is served from
+        //    memory (fast fx-slider re-render) and immune to caller mutation.
+        {
+            var extractor = new FrameExtractor(locator);
+            var first = await extractor.GetFrameAsync(clip, 1.0, 320, 180);
+            Assert.True(first != null, "first extraction");
+            var expected = (byte[])first!.Bgra.Clone();
+            Array.Clear(first.Bgra); // caller mutates its copy (like effects do)
+
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var second = await extractor.GetFrameAsync(clip, 1.0, 320, 180);
+            timer.Stop();
+
+            Assert.True(second != null && second!.Bgra.SequenceEqual(expected),
+                "cached frame is pristine despite caller mutation");
+            Assert.True(timer.ElapsedMilliseconds < 40,
+                $"cache hit should be near-instant (took {timer.ElapsedMilliseconds} ms)");
+        }
+
+        // 8) Real-time playback engine: playhead advances with the wall clock,
         //    frames keep arriving, and the run ends exactly at the duration.
         {
             var engine = new VideoEditor.MediaEngine.Playback.PlaybackEngine(
@@ -134,7 +153,7 @@ public static class FfmpegIntegrationTests
             Assert.True(presented >= 5, $"frames were presented continuously (got {presented})");
         }
 
-        // 8) Export the yellow-range selection [0.5, 1.5) and verify the result.
+        // 9) Export the yellow-range selection [0.5, 1.5) and verify the result.
         project.ExportRange = new TimeRange { Start = 0.5, End = 1.5 };
         var output = Path.Combine(workDir, "out.mp4");
         var export = new ExportService(locator, compositor, catalog);

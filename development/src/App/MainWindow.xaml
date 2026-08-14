@@ -355,29 +355,6 @@
                     </StackPanel>
                 </Button>
 
-                <Border Style="{StaticResource ToolbarSeparator}"/>
-
-                <Button Style="{StaticResource ToolButton}" Command="{Binding AddVideoTrackCommand}"
-                        ToolTip="Add video track">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE714;" Foreground="#FF6FA1E8"/>
-                        <TextBlock Text="+ Video" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding AddAudioTrackCommand}"
-                        ToolTip="Add audio track">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE767;" Foreground="#FF63BE8B"/>
-                        <TextBlock Text="+ Audio" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding AddOverlayTrackCommand}"
-                        ToolTip="Add overlay/text track">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8B9;" Foreground="#FFB08FE0"/>
-                        <TextBlock Text="+ Overlay" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -392,7 +369,7 @@
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <TextBlock Text="{Binding RangeLabel}" Foreground="#FFFFD54F" FontSize="11"
                                Margin="0,0,12,0"
-                               Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}"/>
+                               Visibility="{Binding HasExplicitRange, Converter={StaticResource BoolToVis}}"/>
                     <TextBlock Text="{Binding TimelineInfoText}"
                                Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
                     <TextBlock Text="   |   " Foreground="{StaticResource EdgeBrush}" FontSize="11"/>
@@ -444,11 +421,12 @@
                                              ItemsSource="{Binding MediaItems}"
                                              ItemContainerStyle="{StaticResource MediaItemContainer}"
                                              Background="Transparent" BorderThickness="0"
-                                             AllowDrop="True"
+                                             AllowDrop="True" SelectionMode="Extended"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              PreviewMouseLeftButtonDown="MediaList_PreviewMouseLeftButtonDown"
                                              PreviewMouseMove="MediaList_PreviewMouseMove"
-                                             MouseDoubleClick="MediaList_MouseDoubleClick">
+                                             MouseDoubleClick="MediaList_MouseDoubleClick"
+                                             PreviewKeyDown="MediaList_PreviewKeyDown">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
                                                 <DockPanel ToolTip="{Binding FilePath}">
@@ -673,14 +651,6 @@
 
                 <!-- ======== Timeline ======== -->
                 <Border Grid.Row="2" Background="{StaticResource PanelBrush}">
-                    <DockPanel>
-                        <DockPanel DockPanel.Dock="Top">
-                            <TextBlock DockPanel.Dock="Right" Margin="0,10,12,0" FontSize="10"
-                                       Foreground="#FF5A616E"
-                                       Text="Drag clips to move  •  I/O: yellow export range  •  Ruler: scrub  •  Wheel: zoom"/>
-                            <TextBlock Text="TIMELINE" Style="{StaticResource PanelHeader}"/>
-                        </DockPanel>
-
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="150"/>
@@ -733,15 +703,7 @@
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
 
-                                        <!-- Yellow export range: region + start/end bars -->
-                                        <Rectangle Height="25" VerticalAlignment="Top" HorizontalAlignment="Left"
-                                                   Fill="#2EFFD54F" IsHitTestVisible="False"
-                                                   Width="{Binding RangeWidth}"
-                                                   Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
-                                            <Rectangle.RenderTransform>
-                                                <TranslateTransform X="{Binding RangeStartX}"/>
-                                            </Rectangle.RenderTransform>
-                                        </Rectangle>
+                                        <!-- Yellow export range: start/end bars only (no interior fill) -->
                                         <Border x:Name="RangeStartBar" Width="6" HorizontalAlignment="Left"
                                                 Background="#FFFFD54F" CornerRadius="1" Cursor="SizeWE"
                                                 ToolTip="Export start — drag to move (I sets it at the playhead)"
@@ -798,15 +760,6 @@
                                     <ItemsControl ItemsSource="{Binding Tracks}"
                                                   ItemTemplate="{StaticResource LaneTemplate}"/>
 
-                                    <Rectangle HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                                               Fill="#14FFD54F" IsHitTestVisible="False"
-                                               Width="{Binding RangeWidth}"
-                                               Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
-                                        <Rectangle.RenderTransform>
-                                            <TranslateTransform X="{Binding RangeStartX}"/>
-                                        </Rectangle.RenderTransform>
-                                    </Rectangle>
-
                                     <Rectangle Width="1.5" HorizontalAlignment="Left" VerticalAlignment="Stretch"
                                                Fill="#FFE5484D" IsHitTestVisible="False">
                                         <Rectangle.RenderTransform>
@@ -816,7 +769,6 @@
                                 </Grid>
                             </ScrollViewer>
                         </Grid>
-                    </DockPanel>
                 </Border>
             </Grid>
         </Grid>

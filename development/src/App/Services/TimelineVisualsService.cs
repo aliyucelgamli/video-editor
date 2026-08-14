@@ -25,6 +25,8 @@ public class TimelineVisualsService
     private readonly ConcurrentDictionary<string, float[]> _peaks = new();
     private readonly ConcurrentDictionary<string, ImageSource> _images = new();
     private readonly ConcurrentDictionary<string, byte> _pendingPeaks = new();
+    private readonly ConcurrentDictionary<string, ImageSource> _thumbnailMemo = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<ImageSource>> _filmstripMemo = new();
 
     public TimelineVisualsService(ThumbnailService thumbnails, WaveformService waveform, Dispatcher dispatcher)
     {
@@ -77,6 +79,15 @@ public class TimelineVisualsService
             return;
         }
 
+        // Synchronous memo hit: view models rebuilt on undo/zoom get their
+        // thumbnails instantly, with no async round-trip and no flicker.
+        var memoKey = FormattableString.Invariant($"{mediaPath}|{timeSeconds:0.##}");
+        if (_thumbnailMemo.TryGetValue(memoKey, out var memoized))
+        {
+            onReady(memoized);
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             try
@@ -85,7 +96,9 @@ public class TimelineVisualsService
                 if (path is null) return;
                 _ = _dispatcher.BeginInvoke(() => // fire-and-forget UI callback
                 {
-                    if (LoadImageCached(path) is { } image) onReady(image);
+                    if (LoadImageCached(path) is not { } image) return;
+                    _thumbnailMemo[memoKey] = image;
+                    onReady(image);
                 });
             }
             catch { /* cosmetic */ }
@@ -96,6 +109,16 @@ public class TimelineVisualsService
     public void RequestFilmstrip(
         string mediaPath, double sourceIn, double sourceOut, int frameCount, Action<IReadOnlyList<ImageSource>> onReady)
     {
+        // Synchronous memo hit: rebuilt event blocks keep their film strip
+        // without flashing empty while the async path spins up.
+        var memoKey = FormattableString.Invariant(
+            $"{mediaPath}|{sourceIn:0.##}|{sourceOut:0.##}|{frameCount}");
+        if (_filmstripMemo.TryGetValue(memoKey, out var memoized))
+        {
+            onReady(memoized);
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             try
@@ -106,7 +129,9 @@ public class TimelineVisualsService
                 _ = _dispatcher.BeginInvoke(() => // fire-and-forget UI callback
                 {
                     var images = paths.Select(LoadImageCached).Where(i => i != null).Cast<ImageSource>().ToList();
-                    if (images.Count > 0) onReady(images);
+                    if (images.Count == 0) return;
+                    _filmstripMemo[memoKey] = images;
+                    onReady(images);
                 });
             }
             catch { /* cosmetic */ }

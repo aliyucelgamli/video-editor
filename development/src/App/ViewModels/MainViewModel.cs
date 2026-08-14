@@ -100,7 +100,9 @@ public class MainViewModel : ObservableObject
             setStatus: s => StatusText = s,
             previewRefresh: RequestPreviewRefresh);
 
-        _previewRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
+        // Short debounce: with the extractor's frame cache, re-rendering the same
+        // playhead position only re-runs effects, so sliders respond almost live.
+        _previewRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
         _previewRefreshTimer.Tick += (_, _) => { _previewRefreshTimer.Stop(); Preview.RequestRender(); };
 
         NewProjectCommand = new RelayCommand(NewProject);
@@ -110,16 +112,13 @@ public class MainViewModel : ObservableObject
         ImportMediaCommand = new RelayCommand(ImportMediaDialog);
         UndoCommand = new RelayCommand(() => _undoRedo.Undo(), () => _undoRedo.CanUndo);
         RedoCommand = new RelayCommand(() => _undoRedo.Redo(), () => _undoRedo.CanRedo);
-        AddVideoTrackCommand = new RelayCommand(() => AddTrack(TrackType.Video));
-        AddAudioTrackCommand = new RelayCommand(() => AddTrack(TrackType.Audio));
-        AddOverlayTrackCommand = new RelayCommand(() => AddTrack(TrackType.Overlay));
         DeleteSelectedCommand = new RelayCommand(DeleteSelected, () => _selectedEventId is not null);
         ZoomInCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 1.25));
         ZoomOutCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 0.8));
         PlayPauseCommand = new RelayCommand(() => Preview.TogglePlay());
         SetRangeStartCommand = new RelayCommand(() => SetRangeEdge(isStart: true));
         SetRangeEndCommand = new RelayCommand(() => SetRangeEdge(isStart: false));
-        ClearRangeCommand = new RelayCommand(ClearRange, () => HasRange);
+        ClearRangeCommand = new RelayCommand(ClearRange, () => HasExplicitRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
         DownloadFfmpegCommand = new RelayCommand(DownloadFfmpeg, () => !_isInstallingFfmpeg);
@@ -206,9 +205,6 @@ public class MainViewModel : ObservableObject
     public RelayCommand ImportMediaCommand { get; }
     public RelayCommand UndoCommand { get; }
     public RelayCommand RedoCommand { get; }
-    public RelayCommand AddVideoTrackCommand { get; }
-    public RelayCommand AddAudioTrackCommand { get; }
-    public RelayCommand AddOverlayTrackCommand { get; }
     public RelayCommand DeleteSelectedCommand { get; }
     public RelayCommand ZoomInCommand { get; }
     public RelayCommand ZoomOutCommand { get; }
@@ -267,9 +263,22 @@ public class MainViewModel : ObservableObject
 
     // ---------- Export range (yellow bars) ----------
 
-    private TimeRange? CurrentRange => _rangeDragPreview ?? _projects.Current.ExportRange;
+    /// <summary>
+    /// The bars are always visible: with no explicit range they sit at the
+    /// project's start/end (and export covers everything). Dragging a bar or
+    /// pressing I/O creates an explicit range.
+    /// </summary>
+    private TimeRange? CurrentRange =>
+        _rangeDragPreview
+        ?? _projects.Current.ExportRange
+        ?? (_projects.Current.Duration > 0.01
+            ? new TimeRange { Start = 0, End = _projects.Current.Duration }
+            : null);
 
     public bool HasRange => CurrentRange != null;
+
+    /// <summary>True only when the user actually set a range (not the fallback).</summary>
+    public bool HasExplicitRange => _projects.Current.ExportRange != null;
     public double RangeStartX => (CurrentRange?.Start ?? 0) * _pixelsPerSecond;
     public double RangeEndX => (CurrentRange?.End ?? 0) * _pixelsPerSecond;
     public double RangeWidth => Math.Max(0, RangeEndX - RangeStartX);
@@ -281,6 +290,7 @@ public class MainViewModel : ObservableObject
     private void NotifyRangeChanged()
     {
         OnPropertyChanged(nameof(HasRange));
+        OnPropertyChanged(nameof(HasExplicitRange));
         OnPropertyChanged(nameof(RangeStartX));
         OnPropertyChanged(nameof(RangeEndX));
         OnPropertyChanged(nameof(RangeWidth));
@@ -369,14 +379,6 @@ public class MainViewModel : ObservableObject
         {
             StatusText = "Nothing to export — the timeline is empty";
             return;
-        }
-
-        // No range yet? Create one spanning the whole project so the two
-        // yellow bars appear on the timeline — drag them to narrow the export.
-        if (_projects.Current.ExportRange is null)
-        {
-            CommitRange(new TimeRange { Start = 0, End = _projects.Current.Duration });
-            StatusText = "Export range set to the whole project — drag the yellow bars to change it";
         }
 
         var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
@@ -677,6 +679,44 @@ public class MainViewModel : ObservableObject
         if (imported > 0) parts.Add($"imported {imported} file(s)");
         if (skipped > 0) parts.Add($"skipped {skipped}");
         StatusText = char.ToUpper(parts[0][0]) + string.Join(", ", parts)[1..];
+    }
+
+    /// <summary>
+    /// Removes media references from the library (Delete key, multi-select).
+    /// Items still used by a timeline event are kept — the project must never
+    /// lose clips silently. Files on disk are never touched.
+    /// </summary>
+    public void RemoveMediaItems(IReadOnlyList<Guid> mediaIds)
+    {
+        if (mediaIds.Count == 0) return;
+
+        var usedIds = _projects.Current.Tracks
+            .SelectMany(t => t.Events)
+            .Select(e => e.MediaId)
+            .ToHashSet();
+
+        var commands = new List<IEditorCommand>();
+        var skippedInUse = 0;
+        foreach (var id in mediaIds)
+        {
+            if (_projects.Current.Media.FindById(id) is not { } item) continue;
+            if (usedIds.Contains(id)) { skippedInUse++; continue; }
+            commands.Add(new RemoveMediaCommand(_projects.Current, item));
+        }
+
+        if (commands.Count > 0)
+        {
+            _undoRedo.ExecuteCommand(commands.Count == 1
+                ? commands[0]
+                : new CompositeCommand($"Remove {commands.Count} media from library", commands));
+        }
+
+        StatusText = (commands.Count, skippedInUse) switch
+        {
+            (0, > 0) => "Nothing removed — the selected media is used on the timeline",
+            (_, 0) => $"Removed {commands.Count} item(s) from the library (files stay on disk)",
+            _ => $"Removed {commands.Count} item(s); kept {skippedInUse} still used on the timeline"
+        };
     }
 
     /// <summary>Double-click in the library: appends the clip to the end of the first compatible track.</summary>
@@ -1031,15 +1071,6 @@ public class MainViewModel : ObservableObject
     }
 
     // ---------- Tracks ----------
-
-    private void AddTrack(TrackType type)
-    {
-        var prefix = type switch { TrackType.Video => "V", TrackType.Audio => "A", _ => "T" };
-        var count = _projects.Current.Tracks.Count(t => t.Type == type);
-        var track = new Track { Name = $"{prefix}{count + 1}", Type = type };
-        _undoRedo.ExecuteCommand(new AddTrackCommand(_projects.Current, track));
-        StatusText = $"Added track {track.Name}";
-    }
 
     private void ToggleTrackMuted(Guid trackId)
     {

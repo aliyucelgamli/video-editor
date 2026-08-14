@@ -95,6 +95,23 @@ public static class TimelineModelTests
             Assert.Close(StretchEventCommand.MinDuration, evt.Duration, "clamped duration");
         });
 
+        TestRunner.Add("RemoveMedia: removes the reference and restores position on undo", () =>
+        {
+            var undo = new UndoRedoService();
+            var project = new Project();
+            var a = new MediaItem { Name = "a.mp4" };
+            var b = new MediaItem { Name = "b.mp4" };
+            var c = new MediaItem { Name = "c.mp4" };
+            project.Media.Items.AddRange(new[] { a, b, c });
+
+            undo.ExecuteCommand(new RemoveMediaCommand(project, b));
+            Assert.Equal("a.mp4,c.mp4", string.Join(",", project.Media.Items.Select(m => m.Name)));
+
+            undo.Undo();
+            Assert.Equal("a.mp4,b.mp4,c.mp4", string.Join(",", project.Media.Items.Select(m => m.Name)),
+                "restored at its original index");
+        });
+
         TestRunner.Add("Unlink: clears both link ids and restores on undo", () =>
         {
             var undo = new UndoRedoService();
