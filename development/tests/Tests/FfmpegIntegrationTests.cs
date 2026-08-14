@@ -167,5 +167,15 @@ public static class FfmpegIntegrationTests
         var exported = await probe.ProbeAsync(output);
         Assert.True(exported is { HasVideo: true, HasAudio: true }, "export has video+audio");
         Assert.Close(1.0, exported!.DurationSeconds!.Value, "export duration equals range", 0.25);
+
+        // 10) Audio-only export (MP3) from the same range.
+        var mp3Output = Path.Combine(workDir, "out.mp3");
+        await export.ExportAsync(project, new ExportSettings
+        {
+            OutputPath = mp3Output, Format = ExportFormat.Mp3,
+            AudioSampleRate = 48000, Range = project.ExportRange
+        });
+        var mp3Probe = await probe.ProbeAsync(mp3Output);
+        Assert.True(mp3Probe is { HasAudio: true, HasVideo: false }, "mp3 is audio-only");
     }
 }

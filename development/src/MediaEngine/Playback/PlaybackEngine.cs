@@ -168,8 +168,8 @@ public class PlaybackEngine
                     // Stale (decode slower than real time): skip presenting, keep reading.
                     if (frameTime < now() - StaleFrameSeconds) continue;
 
-                    ApplyLayerEffects(frame, width, height, layer, frameTime);
-                    mailbox.Publish(frame, width, height);
+                    var display = ApplyLayerEffects(frame, width, height, layer, frameTime, project);
+                    mailbox.Publish(display, width, height);
 
                     // Ahead of the clock → pace down to real time.
                     var ahead = frameTime - now();
@@ -193,8 +193,8 @@ public class PlaybackEngine
                     }
                     if (imageBase != null)
                     {
-                        var display = (byte[])imageBase.Clone(); // effects mutate in place
-                        ApplyLayerEffects(display, width, height, layer, t);
+                        var working = (byte[])imageBase.Clone(); // effects mutate in place
+                        var display = ApplyLayerEffects(working, width, height, layer, t, project);
                         mailbox.Publish(display, width, height);
                     }
                     await Task.Delay(TimeSpan.FromSeconds(ImageRepublishSeconds), token).ConfigureAwait(false);
@@ -224,23 +224,34 @@ public class PlaybackEngine
         }
     }
 
-    /// <summary>Effects + fades + opacity for a single-layer frame (producer thread).</summary>
-    private void ApplyLayerEffects(
-        byte[] frame, int width, int height, FrameCompositor.VisualLayer layer, double time)
+    /// <summary>
+    /// Effects + transform + fades + opacity for a single-layer frame
+    /// (producer thread). Returns the frame to present — a new buffer when a
+    /// transform re-positions the layer.
+    /// </summary>
+    private byte[] ApplyLayerEffects(
+        byte[] frame, int width, int height, FrameCompositor.VisualLayer layer, double time, Project project)
     {
         try
         {
             _effects.Apply(frame, width, height, layer.Event.Effects, time - layer.Event.Start);
             _effects.Apply(frame, width, height, layer.Track.Effects, time);
 
+            var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;
+            var display = FrameCompositor.ApplyTransform(
+                frame, width, height, layer.Event.Transform, positionScale);
+            FrameCompositor.FlattenOnBlack(display);
+
             var opacity = Math.Clamp(layer.Event.Opacity, 0, 1) *
                           Math.Clamp(layer.Track.Opacity, 0, 1) *
                           FrameCompositor.FadeFactor(layer.Event, time);
-            FrameCompositor.ApplyOpacity(frame, opacity);
+            FrameCompositor.ApplyOpacity(display, opacity);
+            return display;
         }
         catch
         {
             // The UI may be editing the effect chain mid-frame; show it unfiltered.
+            return frame;
         }
     }
 

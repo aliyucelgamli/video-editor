@@ -1,0 +1,58 @@
+<Window x:Class="VideoEditor.App.NewProjectWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New Project"
+        Width="400" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+
+    <StackPanel Margin="14,12">
+
+        <TextBlock Text="PROJECT NAME" Style="{StaticResource PanelHeader}" Margin="0,0,0,6"/>
+        <TextBox x:Name="NameBox" Style="{StaticResource FlatTextBox}" Text="Untitled Project"/>
+
+        <TextBlock Text="RESOLUTION" Style="{StaticResource PanelHeader}" Margin="0,12,0,6"/>
+        <ListBox x:Name="PresetList"
+                 Background="Transparent" BorderThickness="0"
+                 ItemContainerStyle="{StaticResource MediaItemContainer}"
+                 SelectionChanged="PresetList_SelectionChanged"/>
+
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="90"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="24"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Custom size" FontSize="11"
+                       Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center"/>
+            <TextBox Grid.Row="0" Grid.Column="1" x:Name="WidthBox" Style="{StaticResource FlatTextBox}"/>
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="×" HorizontalAlignment="Center"
+                       Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center"/>
+            <TextBox Grid.Row="0" Grid.Column="3" x:Name="HeightBox" Style="{StaticResource FlatTextBox}"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Frame rate" FontSize="11" Margin="0,8,0,0"
+                       Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center"/>
+            <TextBox Grid.Row="1" Grid.Column="1" x:Name="FpsBox" Style="{StaticResource FlatTextBox}"
+                     Margin="0,8,0,0" Text="30"/>
+        </Grid>
+
+        <DockPanel Margin="0,14,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Background="#FF2C3E5C"
+                    Padding="16,8" Click="Create_Click">
+                <TextBlock Text="Create" FontWeight="SemiBold"/>
+            </Button>
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="14,8"
+                    Margin="0,0,8,0" Content="Cancel" Click="Cancel_Click"/>
+        </DockPanel>
+    </StackPanel>
+</Window>

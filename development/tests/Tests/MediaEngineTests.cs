@@ -205,6 +205,44 @@ public static class MediaEngineTests
             Assert.True(arguments.Any(a => a.Contains("anullsrc")), "silent source used");
         });
 
+        TestRunner.Add("Transform: identity is a no-op, scale/position remap pixels", () =>
+        {
+            var transform = new Transform2D();
+            var frame = new byte[4 * 4 * 4];
+            Assert.True(ReferenceEquals(frame,
+                FrameCompositor.ApplyTransform(frame, 4, 4, transform, 1)), "identity returns same array");
+
+            // Single bright pixel at (1,1) on a 4×4 canvas, scaled 2× around center:
+            // inverse mapping puts source (1,1) at destination (0,0)…(1,1) region.
+            frame[(1 * 4 + 1) * 4 + 2] = 255; // red
+            frame[(1 * 4 + 1) * 4 + 3] = 255; // alpha
+            var scaled = FrameCompositor.ApplyTransform(
+                frame, 4, 4, new Transform2D { ScaleX = 2, ScaleY = 2 }, 1);
+            Assert.True(scaled[(1 * 4 + 1) * 4 + 3] > 0, "scaled pixel covers near-center area");
+
+            // Position offset: shift right by 2 px moves content toward +x.
+            var moved = FrameCompositor.ApplyTransform(
+                frame, 4, 4, new Transform2D { PositionX = 2 }, 1);
+            Assert.True(moved[(1 * 4 + 3) * 4 + 3] > 0, "pixel moved right");
+            Assert.Equal(0, (int)moved[(1 * 4 + 1) * 4 + 3], "old spot now transparent");
+
+            // Position scale halves offsets for half-size canvases.
+            var halfScaleMoved = FrameCompositor.ApplyTransform(
+                frame, 4, 4, new Transform2D { PositionX = 4 }, 0.5);
+            Assert.True(halfScaleMoved[(1 * 4 + 3) * 4 + 3] > 0, "project-pixel offset scaled to canvas");
+        });
+
+        TestRunner.Add("Export: encoder arguments follow the chosen format", () =>
+        {
+            List<string> ArgsFor(ExportFormat format) => ExportService.BuildEncoderArguments(
+                new ExportSettings { Format = format, OutputPath = "out", Crf = 20 }, "mix.wav", 320, 180);
+
+            Assert.True(ArgsFor(ExportFormat.Mp4H264).Contains("libx264"), "h264");
+            Assert.True(ArgsFor(ExportFormat.Mp4Hevc).Contains("libx265"), "h265");
+            var webm = ArgsFor(ExportFormat.WebMVp9);
+            Assert.True(webm.Contains("libvpx-vp9") && webm.Contains("libopus"), "vp9+opus");
+        });
+
         TestRunner.Add("Compositor: fade factor ramps in and out", () =>
         {
             var evt = new TimelineEvent { Start = 0, Duration = 10, FadeInDuration = 2, FadeOutDuration = 2 };

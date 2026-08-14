@@ -362,7 +362,12 @@ public class MainViewModel : ObservableObject
         private set => SetProperty(ref _exportProgress, value);
     }
 
-    private async void Export()
+    /// <summary>Raised when the export dialog should open (handled by the window).</summary>
+    public event EventHandler? ExportRequested;
+
+    public Project CurrentProject => _projects.Current;
+
+    private void Export()
     {
         if (!_ffmpeg.IsAvailable)
         {
@@ -381,18 +386,29 @@ public class MainViewModel : ObservableObject
             return;
         }
 
+        ExportRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Runs an export with the options confirmed in the export dialog.</summary>
+    public async void StartExport(ExportFormat format, int width, int height, double fps, int crf)
+    {
         var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
         try { Directory.CreateDirectory(exportDir); } catch { exportDir = string.Empty; }
 
         var dialog = new SaveFileDialog
         {
-            Filter = "MP4 Video (*.mp4)|*.mp4",
-            FileName = _projects.Current.Settings.Name + ".mp4",
+            Filter = format.SaveDialogFilter(),
+            FileName = _projects.Current.Settings.Name + format.Extension(),
             InitialDirectory = exportDir
         };
         if (dialog.ShowDialog() != true) return;
 
         var settings = ExportSettings.FromProject(_projects.Current, dialog.FileName);
+        settings.Format = format;
+        settings.Width = width;
+        settings.Height = height;
+        settings.FrameRate = fps;
+        settings.Crf = crf;
         var rangeText = settings.Range != null ? " (selected range)" : " (whole project)";
 
         IsExporting = true;
@@ -439,11 +455,23 @@ public class MainViewModel : ObservableObject
         return result == MessageBoxResult.Yes;
     }
 
-    private void NewProject()
+    /// <summary>Raised when the New Project dialog should open (handled by the window).</summary>
+    public event EventHandler? NewProjectRequested;
+
+    private void NewProject() => NewProjectRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Creates a fresh project with the settings chosen in the New Project dialog.</summary>
+    public void CreateNewProject(string name, int width, int height, double fps)
     {
-        if (!ConfirmDiscardChanges()) return;
-        _projects.NewProject();
-        StatusText = "New project created";
+        _projects.NewProject(string.IsNullOrWhiteSpace(name) ? "Untitled Project" : name.Trim());
+        var settings = _projects.Current.Settings;
+        settings.Width = width;
+        settings.Height = height;
+        settings.FrameRate = fps;
+
+        Preview.Seek(0, render: false);
+        RebuildFromModel();
+        StatusText = $"New project — {width}×{height} @ {fps:0.##} fps";
     }
 
     private void Open()
@@ -592,20 +620,31 @@ public class MainViewModel : ObservableObject
 
     public bool CanDropMediaOnTrack(Guid mediaId, Guid trackId)
     {
+        // Drops are re-routed to a compatible track, so any drop is accepted
+        // as long as one exists somewhere.
         var media = _projects.Current.Media.FindById(mediaId);
-        var track = _projects.Current.FindTrack(trackId);
-        return media != null && track != null && IsCompatible(media.Type, track.Type);
+        return media != null &&
+               _projects.Current.Tracks.Any(t => IsCompatible(media.Type, t.Type));
     }
+
+    /// <summary>
+    /// Assets land where they belong regardless of the lane they were dropped
+    /// on: video/images go to a visual track, audio to an audio track.
+    /// </summary>
+    private Track? RouteToCompatibleTrack(MediaItem media, Track dropTarget) =>
+        IsCompatible(media.Type, dropTarget.Type)
+            ? dropTarget
+            : _projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type));
 
     public void DropMediaOnTrack(Guid mediaId, Guid trackId, double time)
     {
         var media = _projects.Current.Media.FindById(mediaId);
-        var track = _projects.Current.FindTrack(trackId);
-        if (media is null || track is null) return;
+        var dropTarget = _projects.Current.FindTrack(trackId);
+        if (media is null || dropTarget is null) return;
 
-        if (!IsCompatible(media.Type, track.Type))
+        if (RouteToCompatibleTrack(media, dropTarget) is not { } track)
         {
-            StatusText = $"A {media.Type} clip cannot go on a {track.Type} track";
+            StatusText = $"No track can hold a {media.Type} clip";
             return;
         }
 
@@ -618,11 +657,11 @@ public class MainViewModel : ObservableObject
         StatusText = $"Placed '{media.Name}' at {FormatTime(evt.Start)}";
     }
 
-    /// <summary>Drops Explorer files straight onto a track: imports (if new) and places compatible clips.</summary>
+    /// <summary>Drops Explorer files straight onto a track: imports (if new) and places clips on compatible tracks.</summary>
     public void DropFilesOnTrack(Guid trackId, IEnumerable<string> paths, double time)
     {
-        var track = _projects.Current.FindTrack(trackId);
-        if (track is null) return;
+        var dropTarget = _projects.Current.FindTrack(trackId);
+        if (dropTarget is null) return;
 
         var commands = new List<IEditorCommand>();
         var newItems = new List<MediaItem>();
@@ -653,7 +692,7 @@ public class MainViewModel : ObservableObject
                 imported++;
             }
 
-            if (IsCompatible(item.Type, track.Type))
+            if (RouteToCompatibleTrack(item, dropTarget) is { } track)
             {
                 var evt = BuildPlacement(item, track, cursor, commands);
                 cursor = evt.End;
@@ -782,6 +821,34 @@ public class MainViewModel : ObservableObject
     }
 
     // ---------- Moving events ----------
+
+    /// <summary>
+    /// Snaps a yellow range bar to nearby clip edges, the playhead or zero —
+    /// dragging a bar onto a clip boundary is how you export exactly one clip.
+    /// </summary>
+    public double SnapBarTime(double time)
+    {
+        var threshold = 8.0 / _pixelsPerSecond;
+        var best = Math.Max(0, time);
+        var bestDistance = threshold;
+
+        var candidates = _projects.Current.Tracks
+            .SelectMany(t => t.Events)
+            .SelectMany(e => new[] { e.Start, e.End })
+            .Append(0)
+            .Append(Preview.PlayheadTime);
+
+        foreach (var point in candidates)
+        {
+            var distance = Math.Abs(point - time);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = point;
+            }
+        }
+        return Math.Max(0, best);
+    }
 
     /// <summary>
     /// Snaps a desired start time to nearby event edges, the playhead and the
@@ -1024,6 +1091,27 @@ public class MainViewModel : ObservableObject
         _undoRedo.ExecuteCommand(new SetValueCommand<double>(
             $"Set volume of '{target.Name}' to {newValue * 100:0}%",
             oldValue, newValue, v => target.Volume = v));
+    }
+
+    /// <summary>Runs an undoable command from auxiliary windows (clip properties…).</summary>
+    public void RunCommand(IEditorCommand command) => _undoRedo.ExecuteCommand(command);
+
+    /// <summary>Builds the view model for the Clip Properties window (size/…/info buttons).</summary>
+    public EventPropertiesViewModel? CreateEventProperties(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return null;
+        var (track, evt) = found;
+
+        var media = _projects.Current.Media.FindById(evt.MediaId);
+        var volumeTarget = ContentTypeOf(evt, track) == MediaType.Audio
+            ? evt
+            : evt.LinkedEventId is Guid linkedId && _projects.Current.FindEvent(linkedId) is { } linked
+                ? linked.Event
+                : null;
+
+        return new EventPropertiesViewModel(
+            evt, track, media, volumeTarget, _projects.Current.Settings,
+            RunCommand, RequestPreviewRefresh);
     }
 
     // ---------- Effects on events (drop target, fx button, context menu) ----------

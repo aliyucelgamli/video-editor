@@ -48,6 +48,14 @@ public class ExportService
         try
         {
             await MixAudioAsync(project, range, settings, mixedWav, cancellationToken).ConfigureAwait(false);
+
+            if (settings.Format.IsAudioOnly())
+            {
+                await WriteAudioOnlyAsync(settings, ffmpeg, mixedWav, cancellationToken).ConfigureAwait(false);
+                progress?.Report(1.0);
+                return;
+            }
+
             await EncodeVideoAsync(
                 project, range, settings, ffmpeg, mixedWav, width, height, frameCount, progress, cancellationToken)
                 .ConfigureAwait(false);
@@ -56,6 +64,28 @@ public class ExportService
         {
             try { if (File.Exists(mixedWav)) File.Delete(mixedWav); } catch { /* temp cleanup */ }
         }
+    }
+
+    /// <summary>MP3/WAV exports skip video entirely: the mixed track is the product.</summary>
+    private static async Task WriteAudioOnlyAsync(
+        ExportSettings settings, string ffmpeg, string mixedWav, CancellationToken cancellationToken)
+    {
+        if (settings.Format == ExportFormat.Wav)
+        {
+            File.Copy(mixedWav, settings.OutputPath, overwrite: true);
+            return;
+        }
+
+        var result = await ProcessRunner.RunAsync(ffmpeg, new[]
+        {
+            "-y", "-loglevel", "error",
+            "-i", mixedWav,
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            settings.OutputPath
+        }, cancellationToken).ConfigureAwait(false);
+
+        if (!result.Success)
+            throw new InvalidOperationException("Audio encoding failed.\n" + Tail(result.StandardError));
     }
 
     private async Task MixAudioAsync(
@@ -118,26 +148,48 @@ public class ExportService
             throw new InvalidOperationException("Video encoding failed.\n" + Tail(stderr.ToString()));
     }
 
-    private static List<string> BuildEncoderArguments(
-        ExportSettings settings, string mixedWav, int width, int height) => new()
+    /// <summary>Raw BGRA pipe in, chosen container/codec out (exposed for tests).</summary>
+    public static List<string> BuildEncoderArguments(
+        ExportSettings settings, string mixedWav, int width, int height)
     {
-        "-y", "-loglevel", "error",
-        "-f", "rawvideo",
-        "-pix_fmt", "bgra",
-        "-s", $"{width}x{height}",
-        "-r", settings.FrameRate.ToString("0.###", CultureInfo.InvariantCulture),
-        "-i", "pipe:0",
-        "-i", mixedWav,
-        "-map", "0:v", "-map", "1:a",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", settings.Crf.ToString(),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        settings.OutputPath
-    };
+        var arguments = new List<string>
+        {
+            "-y", "-loglevel", "error",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgra",
+            "-s", $"{width}x{height}",
+            "-r", settings.FrameRate.ToString("0.###", CultureInfo.InvariantCulture),
+            "-i", "pipe:0",
+            "-i", mixedWav,
+            "-map", "0:v", "-map", "1:a"
+        };
+
+        arguments.AddRange(settings.Format switch
+        {
+            ExportFormat.Mp4Hevc => new[]
+            {
+                "-c:v", "libx265", "-preset", "fast", "-crf", settings.Crf.ToString(),
+                "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+                "-c:a", "aac", "-b:a", "192k"
+            },
+            ExportFormat.WebMVp9 => new[]
+            {
+                "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", Math.Min(settings.Crf + 12, 45).ToString(),
+                "-row-mt", "1", "-pix_fmt", "yuv420p",
+                "-c:a", "libopus", "-b:a", "128k"
+            },
+            _ => new[]
+            {
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", settings.Crf.ToString(),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k"
+            }
+        });
+
+        arguments.Add("-shortest");
+        arguments.Add(settings.OutputPath);
+        return arguments;
+    }
 
     private static string Tail(string text)
     {

@@ -46,6 +46,31 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(MainViewModel.PlayheadX)) KeepPlayheadVisible();
         };
+        _viewModel.NewProjectRequested += (_, _) => ShowNewProjectDialog();
+        _viewModel.ExportRequested += (_, _) => ShowExportDialog();
+    }
+
+    /// <summary>File → New: resolution/fps dialog, then a fresh project.</summary>
+    private void ShowNewProjectDialog()
+    {
+        if (!_viewModel.ConfirmDiscardChanges()) return;
+        var dialog = new NewProjectWindow { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _viewModel.CreateNewProject(
+            dialog.ProjectName, dialog.ProjectWidth, dialog.ProjectHeight, dialog.ProjectFps);
+    }
+
+    /// <summary>Export button: format/quality dialog, then save-as + render.</summary>
+    private void ShowExportDialog()
+    {
+        var project = _viewModel.CurrentProject;
+        var dialog = new ExportWindow(project.Settings, project.ExportRange, project.Duration)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+        _viewModel.StartExport(
+            dialog.SelectedFormat, dialog.OutputWidth, dialog.OutputHeight, dialog.OutputFps, dialog.Crf);
     }
 
     /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>
@@ -97,7 +122,8 @@ public partial class MainWindow : Window
     {
         if (e.Key != Key.Delete) return;
         var ids = MediaList.SelectedItems.OfType<MediaItemViewModel>().Select(m => m.Id).ToList();
-        if (ids.Count > 0) _viewModel.RemoveMediaItems(ids);
+        if (ids.Count == 0) return; // let the window binding delete the selected clip instead
+        _viewModel.RemoveMediaItems(ids);
         e.Handled = true;
     }
 
@@ -226,6 +252,11 @@ public partial class MainWindow : Window
         if (sender is not Border border || border.DataContext is not EventViewModel evt) return;
 
         _viewModel.SelectEvent(evt.Id);
+
+        // Pull keyboard focus out of the library so Del deletes this clip,
+        // not a media item, and Space toggles playback.
+        LanesScroll.Focus();
+        MediaList.SelectedIndex = -1;
 
         // Move the playhead to the clicked frame so the preview shows the clip
         // you are standing on (clicking empty lane space already did this).
@@ -407,6 +438,31 @@ public partial class MainWindow : Window
         _fxWindow.Show();
     }
 
+    // ---------- size + "…" buttons (Clip Properties window) ----------
+
+    private EventPropertiesWindow? _propertiesWindow;
+
+    private void EventSize_Click(object sender, RoutedEventArgs e) => OpenPropertiesFrom(sender, e);
+
+    private void EventMore_Click(object sender, RoutedEventArgs e) => OpenPropertiesFrom(sender, e);
+
+    private void OpenPropertiesFrom(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not EventViewModel evt) return;
+        _viewModel.SelectEvent(evt.Id);
+        OpenPropertiesWindow(evt.Id);
+        e.Handled = true;
+    }
+
+    private void OpenPropertiesWindow(Guid eventId)
+    {
+        if (_viewModel.CreateEventProperties(eventId) is not { } properties) return;
+        _propertiesWindow?.Close();
+        _propertiesWindow = new EventPropertiesWindow(properties) { Owner = this };
+        _propertiesWindow.Closed += (_, _) => _propertiesWindow = null;
+        _propertiesWindow.Show();
+    }
+
     private void EventBlock_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not EventViewModel evt) return;
@@ -448,6 +504,10 @@ public partial class MainWindow : Window
             menu.Items.Add(removeEffects);
 
             menu.Items.Add(new Separator());
+
+            var properties = new MenuItem { Header = "Properties…" };
+            properties.Click += (_, _) => OpenPropertiesWindow(evt.Id);
+            menu.Items.Add(properties);
 
             var unlink = new MenuItem
             {
@@ -559,10 +619,10 @@ public partial class MainWindow : Window
                 _viewModel.SeekTo(time);
                 break;
             case RulerDragMode.RangeStart:
-                _viewModel.PreviewRangeDrag(time, _viewModel.RangeEndX / pps);
+                _viewModel.PreviewRangeDrag(_viewModel.SnapBarTime(time), _viewModel.RangeEndX / pps);
                 break;
             case RulerDragMode.RangeEnd:
-                _viewModel.PreviewRangeDrag(_viewModel.RangeStartX / pps, time);
+                _viewModel.PreviewRangeDrag(_viewModel.RangeStartX / pps, _viewModel.SnapBarTime(time));
                 break;
         }
     }

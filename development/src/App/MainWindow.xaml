@@ -177,13 +177,28 @@
                         </StackPanel>
                     </DockPanel>
 
-                    <!-- fx button (bottom-right, VEGAS-style): opens the effect picker -->
-                    <Button Width="22" Height="15" FontSize="9" FontWeight="Bold"
-                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                            Margin="0,0,3,3" Content="fx" Foreground="#FFFFD54F"
-                            Style="{StaticResource TrackToggle}"
-                            Click="EventFx_Click"
-                            ToolTip="Add an effect to this clip"/>
+                    <!-- Bottom-right controls (VEGAS-style): size · fx · properties -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom" Margin="0,0,3,3">
+                        <Button Width="20" Height="15" FontSize="9"
+                                Content="&#xE740;" FontFamily="Segoe MDL2 Assets"
+                                Foreground="#FF9CC3F5"
+                                Style="{StaticResource TrackToggle}"
+                                Click="EventSize_Click"
+                                Visibility="{Binding IsVisual, Converter={StaticResource BoolToVis}}"
+                                ToolTip="Size &amp; position (scale the clip to fit the project resolution)"/>
+                        <Button Width="22" Height="15" FontSize="9" FontWeight="Bold"
+                                Content="fx" Foreground="#FFFFD54F"
+                                Style="{StaticResource TrackToggle}"
+                                Click="EventFx_Click"
+                                ToolTip="Effects on this clip (add, tweak, remove)"/>
+                        <Button Width="20" Height="15" FontSize="9"
+                                Content="&#xE712;" FontFamily="Segoe MDL2 Assets"
+                                Foreground="#FFB9C2D0"
+                                Style="{StaticResource TrackToggle}"
+                                Click="EventMore_Click"
+                                ToolTip="Clip properties: speed, volume, fades, info"/>
+                    </StackPanel>
                 </Grid>
             </Border>
         </DataTemplate>

@@ -56,10 +56,13 @@ public class FrameCompositor
                 _effects.Apply(frame.Bgra, frame.Width, frame.Height, evt.Effects, time - evt.Start);
                 _effects.Apply(frame.Bgra, frame.Width, frame.Height, track.Effects, time);
 
+                var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;
+                var pixels = ApplyTransform(frame.Bgra, frame.Width, frame.Height, evt.Transform, positionScale);
+
                 var opacity = Math.Clamp(evt.Opacity, 0, 1) *
                               Math.Clamp(track.Opacity, 0, 1) *
                               FadeFactor(evt, time);
-                BlendOnto(canvas, frame.Bgra, opacity);
+                BlendOnto(canvas, pixels, opacity);
             }
         }
 
@@ -90,6 +93,68 @@ public class FrameCompositor
             }
         }
         return found;
+    }
+
+    /// <summary>True when a transform would not change the frame (fast skip).</summary>
+    public static bool IsIdentityTransform(Transform2D t) =>
+        Math.Abs(t.ScaleX - 1) < 0.001 && Math.Abs(t.ScaleY - 1) < 0.001 &&
+        Math.Abs(t.PositionX) < 0.01 && Math.Abs(t.PositionY) < 0.01;
+
+    /// <summary>
+    /// Applies scale + position to a layer frame (nearest-neighbor, alpha-safe).
+    /// Positions are stored in project pixels; <paramref name="positionScale"/>
+    /// converts them to canvas pixels (canvasWidth / projectWidth), so preview
+    /// and full-resolution export place the layer identically. Uncovered areas
+    /// become transparent, letting lower layers show through.
+    /// Returns the same array when the transform is identity.
+    /// </summary>
+    public static byte[] ApplyTransform(
+        byte[] bgra, int width, int height, Transform2D transform, double positionScale)
+    {
+        if (IsIdentityTransform(transform)) return bgra;
+
+        var scaleX = Math.Clamp(transform.ScaleX, 0.01, 20);
+        var scaleY = Math.Clamp(transform.ScaleY, 0.01, 20);
+        var offsetX = transform.PositionX * positionScale;
+        var offsetY = transform.PositionY * positionScale;
+        var centerX = (width - 1) / 2.0;
+        var centerY = (height - 1) / 2.0;
+
+        var result = new byte[bgra.Length]; // all-transparent
+        for (var y = 0; y < height; y++)
+        {
+            // Inverse mapping: destination pixel → source pixel.
+            var sourceY = (int)Math.Round(centerY + (y - centerY - offsetY) / scaleY);
+            if (sourceY < 0 || sourceY >= height) continue;
+
+            for (var x = 0; x < width; x++)
+            {
+                var sourceX = (int)Math.Round(centerX + (x - centerX - offsetX) / scaleX);
+                if (sourceX < 0 || sourceX >= width) continue;
+
+                var from = (sourceY * width + sourceX) * 4;
+                var to = (y * width + x) * 4;
+                result[to] = bgra[from];
+                result[to + 1] = bgra[from + 1];
+                result[to + 2] = bgra[from + 2];
+                result[to + 3] = bgra[from + 3];
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Flattens transparency onto black (single-layer playback fast path).</summary>
+    public static void FlattenOnBlack(byte[] bgra)
+    {
+        for (var i = 0; i < bgra.Length; i += 4)
+        {
+            var alpha = bgra[i + 3];
+            if (alpha == 255) continue;
+            bgra[i] = (byte)(bgra[i] * alpha / 255);
+            bgra[i + 1] = (byte)(bgra[i + 1] * alpha / 255);
+            bgra[i + 2] = (byte)(bgra[i + 2] * alpha / 255);
+            bgra[i + 3] = 255;
+        }
     }
 
     /// <summary>Multiplies a frame toward black (event/track opacity + fades).</summary>
