@@ -37,6 +37,7 @@ public class TimelineEvent
     public FadeCurve FadeInCurve { get; set; } = FadeCurve.Linear;
     public FadeCurve FadeOutCurve { get; set; } = FadeCurve.Linear;
 
+    /// <summary>Audio gain, 0.0–2.0 (0%–200%). 1.0 = original level.</summary>
     public double Volume { get; set; } = 1.0;
     public double Opacity { get; set; } = 1.0;
     public bool Muted { get; set; }

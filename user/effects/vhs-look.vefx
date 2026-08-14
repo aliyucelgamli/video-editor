@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "effect": {
+    "id": "vhs-look",
+    "name": "VHS Look",
+    "category": "Custom",
+    "description": "Retro VHS tape feel: washed colors, slight blur and dark corners.",
+    "targets": "visual",
+    "parameters": [
+      { "key": "strength", "label": "Strength", "min": 0, "max": 1, "default": 0.7 }
+    ],
+    "steps": [
+      { "kernel": "saturation", "args": { "amount": "0.75" } },
+      { "kernel": "temperature", "args": { "amount": "0.2" } },
+      { "kernel": "blur", "args": { "radius": "1" } },
+      { "kernel": "vignette", "args": { "amount": "$strength" } }
+    ]
+  }
+}

@@ -24,6 +24,10 @@
         <KeyBinding Key="Z" Command="{Binding UndoCommand}"/>
         <KeyBinding Key="Y" Command="{Binding RedoCommand}"/>
         <KeyBinding Key="Delete" Command="{Binding DeleteSelectedCommand}"/>
+        <KeyBinding Key="Space" Command="{Binding PlayPauseCommand}"/>
+        <KeyBinding Key="I" Command="{Binding SetRangeStartCommand}"/>
+        <KeyBinding Key="O" Command="{Binding SetRangeEndCommand}"/>
+        <KeyBinding Modifiers="Control+Shift" Key="R" Command="{Binding ClearRangeCommand}"/>
         <KeyBinding Key="OemPlus" Command="{Binding ZoomInCommand}"/>
         <KeyBinding Key="OemMinus" Command="{Binding ZoomOutCommand}"/>
         <KeyBinding Key="Add" Command="{Binding ZoomInCommand}"/>
@@ -32,59 +36,90 @@
 
     <Window.Resources>
 
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
         <!-- Track header row (left column) -->
         <DataTemplate x:Key="HeaderTemplate">
-            <Border Height="48" Margin="0,0,0,2" Background="{StaticResource PanelAltBrush}">
+            <Border Height="56" Margin="0,0,0,2" Background="{StaticResource PanelAltBrush}">
                 <DockPanel>
                     <Border DockPanel.Dock="Left" Width="4" Margin="0,5,0,5"
                             CornerRadius="2" Background="{Binding HeaderBrush}"/>
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                                VerticalAlignment="Center" Margin="0,0,7,0">
-                        <Button Content="M" Command="{Binding ToggleMuteCommand}" ToolTip="Mute track">
-                            <Button.Style>
-                                <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsMuted}" Value="True">
-                                            <Setter Property="Background" Value="#FFA63D45"/>
-                                            <Setter Property="Foreground" Value="White"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                        <Button Content="S" Command="{Binding ToggleSoloCommand}" ToolTip="Solo track">
-                            <Button.Style>
-                                <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsSolo}" Value="True">
-                                            <Setter Property="Background" Value="#FF9A7B2D"/>
-                                            <Setter Property="Foreground" Value="White"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                    </StackPanel>
-                    <StackPanel VerticalAlignment="Center" Margin="9,0,0,0">
-                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextBrush}"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
-                            <TextBlock Text="{Binding TypeGlyph}" FontFamily="Segoe MDL2 Assets"
+                    <Grid Margin="9,4,7,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="M" Command="{Binding ToggleMuteCommand}" ToolTip="Mute track">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMuted}" Value="True">
+                                                    <Setter Property="Background" Value="#FFA63D45"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="S" Command="{Binding ToggleSoloCommand}" ToolTip="Solo track">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSolo}" Value="True">
+                                                    <Setter Property="Background" Value="#FF9A7B2D"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </StackPanel>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextBrush}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                    <TextBlock Text="{Binding TypeGlyph}" FontFamily="Segoe MDL2 Assets"
+                                               FontSize="9" Foreground="{StaticResource SubtleTextBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding TypeLabel}" FontSize="10"
+                                               Foreground="{StaticResource SubtleTextBrush}" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <!-- Track volume: 0–200%, default 100 -->
+                        <DockPanel Grid.Row="1" ToolTip="Track volume (0–200%)">
+                            <TextBlock DockPanel.Dock="Left" Text="&#xE767;" FontFamily="Segoe MDL2 Assets"
                                        FontSize="9" Foreground="{StaticResource SubtleTextBrush}"
                                        VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding TypeLabel}" FontSize="10"
-                                       Foreground="{StaticResource SubtleTextBrush}" Margin="4,0,0,0"/>
-                        </StackPanel>
-                    </StackPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding VolumeLabel}" FontSize="9"
+                                       Width="30" TextAlignment="Right"
+                                       Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                            <Slider Style="{StaticResource FlatSlider}" Margin="5,0,4,0"
+                                    Minimum="0" Maximum="200"
+                                    Value="{Binding VolumePercent, Mode=TwoWay}"
+                                    PreviewMouseLeftButtonDown="TrackVolume_PreviewMouseDown"
+                                    PreviewMouseLeftButtonUp="TrackVolume_PreviewMouseUp"
+                                    LostMouseCapture="TrackVolume_LostMouseCapture"/>
+                        </DockPanel>
+                    </Grid>
                 </DockPanel>
             </Border>
         </DataTemplate>
 
         <!-- Event block on a lane -->
         <DataTemplate x:Key="EventTemplate">
-            <Border Height="40" Width="{Binding Width}" CornerRadius="4" Cursor="Hand"
+            <Border Height="48" Width="{Binding Width}" CornerRadius="4" Cursor="Hand"
                     Background="{Binding Brush}" ToolTip="{Binding ToolTip}"
-                    MouseLeftButtonDown="EventBlock_MouseLeftButtonDown">
+                    AllowDrop="True"
+                    DragOver="EventBlock_DragOver" Drop="EventBlock_Drop"
+                    MouseLeftButtonDown="EventBlock_MouseLeftButtonDown"
+                    MouseMove="EventBlock_MouseMove"
+                    MouseLeftButtonUp="EventBlock_MouseLeftButtonUp"
+                    LostMouseCapture="EventBlock_LostMouseCapture">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="BorderBrush" Value="#33FFFFFF"/>
@@ -97,20 +132,55 @@
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
-                <DockPanel Margin="6,0">
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding DurationLabel}"
-                               Foreground="#B0FFFFFF" FontSize="10" VerticalAlignment="Center"
-                               Margin="6,0,0,0"/>
-                    <TextBlock Text="{Binding Name}" Foreground="White" FontSize="11"
-                               FontWeight="SemiBold" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"/>
-                </DockPanel>
+                <Grid>
+                    <Grid.Clip>
+                        <RectangleGeometry Rect="0,0,10000,48" RadiusX="4" RadiusY="4"/>
+                    </Grid.Clip>
+
+                    <!-- Film strip (video/image events) -->
+                    <ItemsControl ItemsSource="{Binding Thumbnails}" IsHitTestVisible="False"
+                                  Visibility="{Binding HasThumbnails, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Rows="1"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Image Source="{Binding}" Stretch="UniformToFill" Height="48"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- Waveform (audio events) -->
+                    <Polygon Points="{Binding WaveformPoints}" IsHitTestVisible="False"
+                             Fill="#8811381F" Stroke="#CC9CE8BB" StrokeThickness="1"
+                             Visibility="{Binding HasWaveform, Converter={StaticResource BoolToVis}}"/>
+
+                    <!-- Labels -->
+                    <DockPanel Margin="6,2" VerticalAlignment="Top" IsHitTestVisible="False">
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding DurationLabel}"
+                                   Foreground="#B0FFFFFF" FontSize="10" Margin="6,0,0,0"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                       Foreground="#B0FFFFFF" Margin="0,1,4,0"
+                                       Visibility="{Binding IsLinked, Converter={StaticResource BoolToVis}}"
+                                       ToolTip="Linked audio/video"/>
+                            <Border Background="#66000000" CornerRadius="3" Padding="3,0" Margin="0,0,4,0"
+                                    Visibility="{Binding HasEffects, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="fx" Foreground="#FFFFD54F" FontSize="9" FontWeight="Bold"/>
+                            </Border>
+                            <TextBlock Text="{Binding Name}" Foreground="White" FontSize="11"
+                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </DockPanel>
+                </Grid>
             </Border>
         </DataTemplate>
 
         <!-- Track lane (right, scrollable area) -->
         <DataTemplate x:Key="LaneTemplate">
-            <Border Height="48" Margin="0,0,0,2" HorizontalAlignment="Left"
+            <Border Height="56" Margin="0,0,0,2" HorizontalAlignment="Left"
                     Background="{StaticResource LaneBrush}"
                     BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,0,0,1"
                     Width="{Binding DataContext.TimelineWidth, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -129,6 +199,64 @@
                         </Style>
                     </ItemsControl.ItemContainerStyle>
                 </ItemsControl>
+            </Border>
+        </DataTemplate>
+
+        <!-- Effects panel: one available effect -->
+        <DataTemplate x:Key="EffectItemTemplate">
+            <DockPanel ToolTip="{Binding ToolTip}">
+                <Border DockPanel.Dock="Left" Width="26" Height="26" CornerRadius="6"
+                        Background="#FF23262D">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                               Foreground="{StaticResource AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel VerticalAlignment="Center" Margin="9,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextBrush}"/>
+                        <TextBlock Text="{Binding SourceLabel}" FontSize="9" Margin="6,1,0,0"
+                                   Foreground="#FF9A6FD0"/>
+                    </StackPanel>
+                    <TextBlock FontSize="10" Foreground="{StaticResource SubtleTextBrush}" Margin="0,1,0,0">
+                        <Run Text="{Binding Category, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding TargetLabel, Mode=OneWay}"/>
+                    </TextBlock>
+                </StackPanel>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- Effects panel: one applied effect with its parameters -->
+        <DataTemplate x:Key="AppliedEffectTemplate">
+            <Border Background="#FF20242B" CornerRadius="6" Padding="8,6" Margin="8,3">
+                <StackPanel>
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets"
+                                FontSize="10" Style="{StaticResource TrackToggle}" Width="20"
+                                Command="{Binding RemoveCommand}" ToolTip="Remove effect"/>
+                        <CheckBox Style="{StaticResource FlatCheckBox}"
+                                  IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                  Content="{Binding Name}" FontWeight="SemiBold"/>
+                    </DockPanel>
+                    <ItemsControl ItemsSource="{Binding Parameters}" Margin="0,4,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="0,2,0,0">
+                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Label}" FontSize="10"
+                                               Width="72" Foreground="{StaticResource SubtleTextBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding ValueLabel}" FontSize="10"
+                                               Width="44" TextAlignment="Right"
+                                               Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                                    <Slider Style="{StaticResource FlatSlider}" Margin="4,0"
+                                            Minimum="{Binding Min}" Maximum="{Binding Max}"
+                                            Value="{Binding Value, Mode=TwoWay}"
+                                            PreviewMouseLeftButtonDown="EffectParam_PreviewMouseDown"
+                                            PreviewMouseLeftButtonUp="EffectParam_PreviewMouseUp"
+                                            LostMouseCapture="EffectParam_LostMouseCapture"/>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </Border>
         </DataTemplate>
 
@@ -176,13 +304,6 @@
                         <TextBlock Text="Save" Margin="6,0,0,0"/>
                     </StackPanel>
                 </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding SaveAsCommand}"
-                        ToolTip="Save Project As (Ctrl+Shift+S)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74E;"/>
-                        <TextBlock Text="Save As" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
 
                 <Border Style="{StaticResource ToolbarSeparator}"/>
 
@@ -191,6 +312,13 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
                         <TextBlock Text="Import" Margin="6,0,0,0"/>
+                    </StackPanel>
+                </Button>
+                <Button Style="{StaticResource ToolButton}" Command="{Binding ExportCommand}"
+                        ToolTip="Render to MP4 — uses the yellow start/end range when one is set (I / O keys)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;" Foreground="#FFFFD54F"/>
+                        <TextBlock Text="Export" Margin="6,0,0,0"/>
                     </StackPanel>
                 </Button>
 
@@ -245,88 +373,199 @@
                 Padding="12,5">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBlock Text="{Binding RangeLabel}" Foreground="#FFFFD54F" FontSize="11"
+                               Margin="0,0,12,0"
+                               Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}"/>
                     <TextBlock Text="{Binding TimelineInfoText}"
                                Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
                     <TextBlock Text="   |   " Foreground="{StaticResource EdgeBrush}" FontSize="11"/>
                     <TextBlock Text="{Binding HistoryText}"
                                Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
                 </StackPanel>
-                <TextBlock Text="{Binding StatusText}"
-                           Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding StatusText}"
+                               Foreground="{StaticResource SubtleTextBrush}" FontSize="11"
+                               VerticalAlignment="Center"/>
+                    <ProgressBar Style="{StaticResource FlatProgressBar}" Width="140" Margin="12,0,0,0"
+                                 Minimum="0" Maximum="1" Value="{Binding ExportProgress, Mode=OneWay}"
+                                 VerticalAlignment="Center"
+                                 Visibility="{Binding IsExporting, Converter={StaticResource BoolToVis}}"/>
+                    <Button Style="{StaticResource ToolButton}" Padding="6,2" Margin="8,0,0,0"
+                            Content="Cancel" FontSize="10"
+                            Command="{Binding CancelExportCommand}"
+                            Visibility="{Binding IsExporting, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
             </DockPanel>
         </Border>
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="280" MinWidth="200"/>
+                <ColumnDefinition Width="300" MinWidth="220"/>
                 <ColumnDefinition Width="4"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- ======== Media Library ======== -->
-            <Border Grid.Column="0" Background="{StaticResource PanelBrush}"
-                    AllowDrop="True" DragOver="MediaLibrary_DragOver" Drop="MediaLibrary_Drop">
-                <DockPanel>
-                    <DockPanel DockPanel.Dock="Top">
-                        <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
-                                Padding="7,4" Margin="0,5,8,0"
-                                Command="{Binding ImportMediaCommand}" ToolTip="Import media files">
-                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE710;" FontSize="11"/>
-                        </Button>
-                        <TextBlock Text="MEDIA LIBRARY" Style="{StaticResource PanelHeader}"/>
-                    </DockPanel>
-                    <Grid>
-                        <ListBox x:Name="MediaList"
-                                 ItemsSource="{Binding MediaItems}"
-                                 ItemContainerStyle="{StaticResource MediaItemContainer}"
-                                 Background="Transparent" BorderThickness="0"
-                                 AllowDrop="True"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 PreviewMouseLeftButtonDown="MediaList_PreviewMouseLeftButtonDown"
-                                 PreviewMouseMove="MediaList_PreviewMouseMove"
-                                 MouseDoubleClick="MediaList_MouseDoubleClick">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <DockPanel ToolTip="{Binding FilePath}">
-                                        <Border DockPanel.Dock="Left" Width="30" Height="30"
-                                                CornerRadius="6" Background="#FF23262D">
-                                            <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
-                                                       FontSize="13" Foreground="{Binding GlyphBrush}"
-                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <StackPanel VerticalAlignment="Center" Margin="9,0,0,0">
-                                            <TextBlock Text="{Binding Name}"
-                                                       Foreground="{StaticResource TextBrush}"
-                                                       TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Text="{Binding MetaLabel}" FontSize="10"
-                                                       Foreground="{StaticResource SubtleTextBrush}"
-                                                       Margin="0,1,0,0"/>
-                                        </StackPanel>
+            <!-- ======== Left panel: Media / Effects tabs ======== -->
+            <Border Grid.Column="0" Background="{StaticResource PanelBrush}">
+                <TabControl Style="{StaticResource SideTabControl}">
+
+                    <!-- MEDIA tab -->
+                    <TabItem Header="MEDIA" Style="{StaticResource SideTabItem}">
+                        <Border AllowDrop="True" Background="Transparent"
+                                DragOver="MediaLibrary_DragOver" Drop="MediaLibrary_Drop">
+                            <DockPanel>
+                                <DockPanel DockPanel.Dock="Top">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                                            Padding="7,4" Margin="0,5,8,0"
+                                            Command="{Binding ImportMediaCommand}" ToolTip="Import media files">
+                                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE710;" FontSize="11"/>
+                                    </Button>
+                                    <TextBlock Text="MEDIA LIBRARY" Style="{StaticResource PanelHeader}"/>
+                                </DockPanel>
+                                <Grid>
+                                    <ListBox x:Name="MediaList"
+                                             ItemsSource="{Binding MediaItems}"
+                                             ItemContainerStyle="{StaticResource MediaItemContainer}"
+                                             Background="Transparent" BorderThickness="0"
+                                             AllowDrop="True"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             PreviewMouseLeftButtonDown="MediaList_PreviewMouseLeftButtonDown"
+                                             PreviewMouseMove="MediaList_PreviewMouseMove"
+                                             MouseDoubleClick="MediaList_MouseDoubleClick">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel ToolTip="{Binding FilePath}">
+                                                    <Border DockPanel.Dock="Left" Width="52" Height="34"
+                                                            CornerRadius="5" Background="#FF23262D">
+                                                        <Grid>
+                                                            <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
+                                                                       FontSize="13" Foreground="{Binding GlyphBrush}"
+                                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                            <Border CornerRadius="5"
+                                                                    Visibility="{Binding HasThumbnail, Converter={StaticResource BoolToVis}}">
+                                                                <Border.Background>
+                                                                    <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                                                                </Border.Background>
+                                                            </Border>
+                                                        </Grid>
+                                                    </Border>
+                                                    <StackPanel VerticalAlignment="Center" Margin="9,0,0,0">
+                                                        <TextBlock Text="{Binding Name}"
+                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding MetaLabel}" FontSize="10"
+                                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                                   Margin="0,1,0,0"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                IsHitTestVisible="False">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding MediaItems.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="26"
+                                                   Foreground="#FF3A4050" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Drop media files here" Foreground="{StaticResource SubtleTextBrush}"
+                                                   FontSize="12" Margin="0,10,0,2" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="or click Import — then drag clips onto a track"
+                                                   Foreground="#FF5A616E" FontSize="10" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+                    </TabItem>
+
+                    <!-- EFFECTS tab -->
+                    <TabItem Header="EFFECTS" Style="{StaticResource SideTabItem}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DockPanel Grid.Row="0">
+                                <DockPanel DockPanel.Dock="Top">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                                            Padding="7,4" Margin="0,5,8,0"
+                                            Command="{Binding Effects.ImportVefxCommand}"
+                                            ToolTip="Import a .vefx effect file into user/effects">
+                                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE710;" FontSize="11"/>
+                                    </Button>
+                                    <TextBlock Text="EFFECTS" Style="{StaticResource PanelHeader}"/>
+                                </DockPanel>
+                                <ListBox x:Name="EffectList"
+                                         ItemsSource="{Binding Effects.AvailableEffects}"
+                                         ItemTemplate="{StaticResource EffectItemTemplate}"
+                                         ItemContainerStyle="{StaticResource MediaItemContainer}"
+                                         Background="Transparent" BorderThickness="0"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         PreviewMouseLeftButtonDown="EffectList_PreviewMouseLeftButtonDown"
+                                         PreviewMouseMove="EffectList_PreviewMouseMove"
+                                         MouseDoubleClick="EffectList_MouseDoubleClick"/>
+                            </DockPanel>
+
+                            <!-- Selected clip: volume + effect chain -->
+                            <Border Grid.Row="1" BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,1,0,0"
+                                    Background="{StaticResource PanelBrush}"
+                                    Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource PanelHeader}" Text="SELECTED CLIP"/>
+                                    <TextBlock Text="{Binding SelectedEventName}" Margin="12,0,12,4"
+                                               Foreground="{StaticResource TextBrush}" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <DockPanel Margin="12,2,12,6" ToolTip="Clip volume (0–200%, default 100%)"
+                                               Visibility="{Binding SelectedHasVolume, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock DockPanel.Dock="Left" Text="&#xE767;" FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="11" Foreground="{StaticResource SubtleTextBrush}"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SelectedVolumeLabel}"
+                                                   Width="36" TextAlignment="Right" FontSize="11"
+                                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                                        <Slider Style="{StaticResource FlatSlider}" Margin="7,0,5,0"
+                                                Minimum="0" Maximum="200"
+                                                Value="{Binding SelectedVolumePercent, Mode=TwoWay}"
+                                                PreviewMouseLeftButtonDown="SelectedVolume_PreviewMouseDown"
+                                                PreviewMouseLeftButtonUp="SelectedVolume_PreviewMouseUp"
+                                                LostMouseCapture="SelectedVolume_LostMouseCapture"/>
                                     </DockPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                                    IsHitTestVisible="False">
-                            <StackPanel.Style>
-                                <Style TargetType="StackPanel">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding MediaItems.Count}" Value="0">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </StackPanel.Style>
-                            <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="26"
-                                       Foreground="#FF3A4050" HorizontalAlignment="Center"/>
-                            <TextBlock Text="Drop media files here" Foreground="{StaticResource SubtleTextBrush}"
-                                       FontSize="12" Margin="0,10,0,2" HorizontalAlignment="Center"/>
-                            <TextBlock Text="or click Import — then drag clips onto a track"
-                                       Foreground="#FF5A616E" FontSize="10" HorizontalAlignment="Center"/>
-                        </StackPanel>
-                    </Grid>
-                </DockPanel>
+
+                                    <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+                                        <StackPanel>
+                                            <ItemsControl ItemsSource="{Binding Effects.AppliedEffects}"
+                                                          ItemTemplate="{StaticResource AppliedEffectTemplate}"/>
+                                            <TextBlock Text="No effects yet — drag one from the list onto the clip, or double-click an effect."
+                                                       FontSize="10" Foreground="#FF5A616E" Margin="12,2,12,8"
+                                                       TextWrapping="Wrap">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Effects.SelectionHasEffects}" Value="False">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <Border Height="6"/>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </Border>
 
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch"/>
@@ -335,20 +574,61 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="150"/>
                     <RowDefinition Height="4"/>
-                    <RowDefinition Height="300" MinHeight="140"/>
+                    <RowDefinition Height="320" MinHeight="140"/>
                 </Grid.RowDefinitions>
 
                 <!-- ======== Preview ======== -->
                 <Border Grid.Row="0" Margin="10" CornerRadius="8" Background="#FF0A0B0D"
                         BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1">
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="42"
-                                   Foreground="#FF262B36" HorizontalAlignment="Center"/>
-                        <TextBlock Text="No preview yet" Foreground="#FF4A5160" FontSize="13"
-                                   Margin="0,12,0,2" HorizontalAlignment="Center"/>
-                        <TextBlock Text="The media engine (FFmpeg) arrives in a later step"
-                                   Foreground="#FF343B49" FontSize="11" HorizontalAlignment="Center"/>
-                    </StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Image Grid.Row="0" Source="{Binding Preview.CurrentFrame}" Margin="8"
+                               RenderOptions.BitmapScalingMode="LowQuality"/>
+
+                        <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    IsHitTestVisible="False">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Preview.CurrentFrame}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="42"
+                                       Foreground="#FF262B36" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Click the timeline to preview a frame" Foreground="#FF4A5160" FontSize="13"
+                                       Margin="0,12,0,2" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Space plays, the ruler scrubs (FFmpeg required)"
+                                       Foreground="#FF343B49" FontSize="11" HorizontalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Transport -->
+                        <Border Grid.Row="1" BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,1,0,0"
+                                Padding="8,4">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Preview.TimeLabel}"
+                                           Foreground="{StaticResource TextBrush}" FontSize="12"
+                                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <Button Style="{StaticResource ToolButton}" Padding="10,4"
+                                            Command="{Binding Preview.PlayPauseCommand}" ToolTip="Play / Pause (Space)">
+                                        <TextBlock Style="{StaticResource ButtonIcon}" Text="{Binding Preview.PlayPauseGlyph}"/>
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Padding="10,4"
+                                            Command="{Binding Preview.StopCommand}" ToolTip="Stop (back to start)">
+                                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE71A;"/>
+                                    </Button>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
                 </Border>
 
                 <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
@@ -360,7 +640,7 @@
                         <DockPanel DockPanel.Dock="Top">
                             <TextBlock DockPanel.Dock="Right" Margin="0,10,12,0" FontSize="10"
                                        Foreground="#FF5A616E"
-                                       Text="Drag media to a track  •  Wheel: zoom  •  Shift+Wheel: scroll  •  Del: delete"/>
+                                       Text="Drag clips to move  •  I/O: yellow export range  •  Ruler: scrub  •  Wheel: zoom"/>
                             <TextBlock Text="TIMELINE" Style="{StaticResource PanelHeader}"/>
                         </DockPanel>
 
@@ -378,37 +658,83 @@
                             <Border Grid.Row="0" Grid.Column="0" Background="{StaticResource PanelAltBrush}"
                                     BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,0,1,1"/>
 
-                            <!-- Ruler -->
+                            <!-- Ruler: ticks + yellow range bars + playhead -->
                             <Border Grid.Row="0" Grid.Column="1" Background="{StaticResource PanelAltBrush}"
                                     BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,0,0,1">
                                 <ScrollViewer x:Name="RulerScroll" Focusable="False"
                                               HorizontalScrollBarVisibility="Hidden"
                                               VerticalScrollBarVisibility="Disabled"
                                               PreviewMouseWheel="RulerScroll_PreviewMouseWheel">
-                                    <ItemsControl ItemsSource="{Binding RulerTicks}" Height="25"
-                                                  Width="{Binding TimelineWidth}" HorizontalAlignment="Left">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <Canvas/>
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemContainerStyle>
-                                            <Style TargetType="ContentPresenter">
-                                                <Setter Property="Canvas.Left" Value="{Binding X}"/>
-                                            </Style>
-                                        </ItemsControl.ItemContainerStyle>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Label}" FontSize="10"
-                                                               Foreground="{StaticResource SubtleTextBrush}"
-                                                               Margin="4,2,0,1"/>
-                                                    <Rectangle Width="1" Height="8" HorizontalAlignment="Left"
-                                                               Fill="{StaticResource TickBrush}"/>
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                    <Grid x:Name="RulerSurface" Height="25" Background="Transparent"
+                                          Width="{Binding TimelineWidth}" HorizontalAlignment="Left"
+                                          MouseLeftButtonDown="Ruler_MouseLeftButtonDown"
+                                          MouseMove="Ruler_MouseMove"
+                                          MouseLeftButtonUp="Ruler_MouseLeftButtonUp"
+                                          LostMouseCapture="Ruler_LostMouseCapture">
+
+                                        <ItemsControl ItemsSource="{Binding RulerTicks}" IsHitTestVisible="False">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <Canvas/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Label}" FontSize="10"
+                                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                                   Margin="4,2,0,1"/>
+                                                        <Rectangle Width="1" Height="8" HorizontalAlignment="Left"
+                                                                   Fill="{StaticResource TickBrush}"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <!-- Yellow export range: region + start/end bars -->
+                                        <Rectangle Height="25" VerticalAlignment="Top" HorizontalAlignment="Left"
+                                                   Fill="#2EFFD54F" IsHitTestVisible="False"
+                                                   Width="{Binding RangeWidth}"
+                                                   Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
+                                            <Rectangle.RenderTransform>
+                                                <TranslateTransform X="{Binding RangeStartX}"/>
+                                            </Rectangle.RenderTransform>
+                                        </Rectangle>
+                                        <Border x:Name="RangeStartBar" Width="6" HorizontalAlignment="Left"
+                                                Background="#FFFFD54F" CornerRadius="1" Cursor="SizeWE"
+                                                ToolTip="Export start — drag to move (I sets it at the playhead)"
+                                                Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
+                                            <Border.RenderTransform>
+                                                <TranslateTransform X="{Binding RangeStartX}"/>
+                                            </Border.RenderTransform>
+                                        </Border>
+                                        <Border x:Name="RangeEndBar" Width="6" HorizontalAlignment="Left"
+                                                Background="#FFFFD54F" CornerRadius="1" Cursor="SizeWE"
+                                                ToolTip="Export end — drag to move (O sets it at the playhead)"
+                                                RenderTransformOrigin="0,0"
+                                                Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
+                                            <Border.RenderTransform>
+                                                <TransformGroup>
+                                                    <TranslateTransform X="-6"/>
+                                                    <TranslateTransform X="{Binding RangeEndX}"/>
+                                                </TransformGroup>
+                                            </Border.RenderTransform>
+                                        </Border>
+
+                                        <!-- Playhead marker -->
+                                        <Rectangle Width="2" Height="25" VerticalAlignment="Top"
+                                                   HorizontalAlignment="Left" Fill="#FFE5484D"
+                                                   IsHitTestVisible="False">
+                                            <Rectangle.RenderTransform>
+                                                <TranslateTransform X="{Binding PlayheadX}"/>
+                                            </Rectangle.RenderTransform>
+                                        </Rectangle>
+                                    </Grid>
                                 </ScrollViewer>
                             </Border>
 
@@ -424,15 +750,33 @@
                                 </ScrollViewer>
                             </Border>
 
-                            <!-- Lanes -->
+                            <!-- Lanes + playhead/range overlay -->
                             <ScrollViewer x:Name="LanesScroll" Grid.Row="1" Grid.Column="1"
                                           HorizontalScrollBarVisibility="Auto"
                                           VerticalScrollBarVisibility="Auto"
                                           Background="Transparent"
                                           ScrollChanged="LanesScroll_ScrollChanged"
                                           PreviewMouseWheel="LanesScroll_PreviewMouseWheel">
-                                <ItemsControl ItemsSource="{Binding Tracks}"
-                                              ItemTemplate="{StaticResource LaneTemplate}"/>
+                                <Grid Width="{Binding TimelineWidth}" HorizontalAlignment="Left">
+                                    <ItemsControl ItemsSource="{Binding Tracks}"
+                                                  ItemTemplate="{StaticResource LaneTemplate}"/>
+
+                                    <Rectangle HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                               Fill="#14FFD54F" IsHitTestVisible="False"
+                                               Width="{Binding RangeWidth}"
+                                               Visibility="{Binding HasRange, Converter={StaticResource BoolToVis}}">
+                                        <Rectangle.RenderTransform>
+                                            <TranslateTransform X="{Binding RangeStartX}"/>
+                                        </Rectangle.RenderTransform>
+                                    </Rectangle>
+
+                                    <Rectangle Width="1.5" HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                               Fill="#FFE5484D" IsHitTestVisible="False">
+                                        <Rectangle.RenderTransform>
+                                            <TranslateTransform X="{Binding PlayheadX}"/>
+                                        </Rectangle.RenderTransform>
+                                    </Rectangle>
+                                </Grid>
                             </ScrollViewer>
                         </Grid>
                     </DockPanel>

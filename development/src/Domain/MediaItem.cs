@@ -16,6 +16,15 @@ public class MediaItem
     public double? DurationSeconds { get; set; }
     public long? FileSizeBytes { get; set; }
 
+    // ---- Filled asynchronously by the media probe (ffprobe) ----
+
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public double? FrameRate { get; set; }
+
+    /// <summary>Whether a video file carries an audio stream. Null until probed.</summary>
+    public bool? HasAudio { get; set; }
+
     /// <summary>Optional content hash, used later to relink missing media.</summary>
     public string? Hash { get; set; }
 

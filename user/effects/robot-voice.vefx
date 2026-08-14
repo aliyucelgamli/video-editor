@@ -1,0 +1,18 @@
+{
+  "formatVersion": 1,
+  "effect": {
+    "id": "robot-voice",
+    "name": "Robot Voice",
+    "category": "Custom",
+    "description": "Lowered pitch with a metallic echo — attach to audio events.",
+    "targets": "audio",
+    "parameters": [
+      { "key": "pitch", "label": "Pitch", "min": 0.5, "max": 1.0, "default": 0.8, "unit": "x" },
+      { "key": "delay", "label": "Echo Delay", "min": 20, "max": 400, "default": 60, "unit": "ms" }
+    ],
+    "steps": [
+      { "kernel": "pitch", "args": { "pitch": "$pitch" } },
+      { "kernel": "echo", "args": { "delay": "$delay", "decay": "0.35" } }
+    ]
+  }
+}

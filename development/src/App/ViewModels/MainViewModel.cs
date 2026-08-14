@@ -2,12 +2,22 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using VideoEditor.App.Mvvm;
+using VideoEditor.App.Services;
 using VideoEditor.Application.Commands;
+using VideoEditor.Application.Effects;
 using VideoEditor.Application.Services;
 using VideoEditor.Application.UndoRedo;
 using VideoEditor.Domain;
+using VideoEditor.MediaEngine;
+using VideoEditor.MediaEngine.Effects;
+using VideoEditor.MediaEngine.Export;
+using VideoEditor.MediaEngine.Ffmpeg;
+using VideoEditor.MediaEngine.Frames;
+using VideoEditor.MediaEngine.Thumbnails;
+using VideoEditor.MediaEngine.Waveform;
 using VideoEditor.ProjectIO;
 
 namespace VideoEditor.App.ViewModels;
@@ -29,10 +39,21 @@ public class MainViewModel : ObservableObject
 
     private readonly UndoRedoService _undoRedo = new();
     private readonly ProjectService _projects;
+    private readonly EffectCatalog _catalog;
+    private readonly UserEffectLibrary _userEffects;
+    private readonly FFmpegLocator _ffmpeg;
+    private readonly MediaEnrichmentService _enrichment;
+    private readonly TimelineVisualsService _visuals;
+    private readonly ExportService _exporter;
+    private readonly DispatcherTimer _previewRefreshTimer;
 
     private string _statusText = "Ready — drop media files into the library or a track";
     private double _pixelsPerSecond = 20.0;
     private Guid? _selectedEventId;
+    private TimeRange? _rangeDragPreview;
+    private bool _isExporting;
+    private double _exportProgress;
+    private CancellationTokenSource? _exportCts;
 
     /// <summary>Raised when the view should zoom the timeline by a factor (anchored in view code).</summary>
     public event EventHandler<double>? ZoomRequested;
@@ -42,7 +63,41 @@ public class MainViewModel : ObservableObject
         _projects = new ProjectService(new JsonProjectSerializer(), _undoRedo);
         _projects.ProjectChanged += (_, _) => { _selectedEventId = null; RebuildFromModel(); };
         _projects.StateChanged += (_, _) => OnPropertyChanged(nameof(WindowTitle));
-        _undoRedo.StateChanged += (_, _) => RebuildFromModel();
+        _undoRedo.StateChanged += (_, _) => { RebuildFromModel(); RequestPreviewRefresh(); };
+
+        // ---- Media engine wiring (all features degrade gracefully without ffmpeg) ----
+        var appRoot = CachePaths.LocateAppRoot();
+        var cache = CachePaths.Locate();
+        _ffmpeg = new FFmpegLocator(appRoot);
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        _enrichment = new MediaEnrichmentService(new MediaProbe(_ffmpeg), dispatcher);
+        _visuals = new TimelineVisualsService(
+            new ThumbnailService(_ffmpeg, cache), new WaveformService(_ffmpeg, cache), dispatcher);
+
+        _catalog = new EffectCatalog();
+        _userEffects = new UserEffectLibrary(
+            _catalog, new VefxSerializer(), Path.Combine(appRoot, "user", "effects"));
+        _userEffects.LoadAll();
+
+        var compositor = new FrameCompositor(new FrameExtractor(_ffmpeg), new VideoEffectPipeline(_catalog));
+        _exporter = new ExportService(_ffmpeg, compositor, _catalog);
+
+        Preview = new PreviewViewModel(compositor, () => _projects.Current);
+        Preview.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
+                OnPropertyChanged(nameof(PlayheadX));
+        };
+
+        Effects = new EffectsPanelViewModel(
+            _catalog, _userEffects,
+            execute: c => _undoRedo.ExecuteCommand(c),
+            getSelected: GetSelectedContext,
+            setStatus: s => StatusText = s,
+            previewRefresh: RequestPreviewRefresh);
+
+        _previewRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
+        _previewRefreshTimer.Tick += (_, _) => { _previewRefreshTimer.Stop(); Preview.RequestRender(); };
 
         NewProjectCommand = new RelayCommand(NewProject);
         OpenCommand = new RelayCommand(Open);
@@ -57,9 +112,18 @@ public class MainViewModel : ObservableObject
         DeleteSelectedCommand = new RelayCommand(DeleteSelected, () => _selectedEventId is not null);
         ZoomInCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 1.25));
         ZoomOutCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 0.8));
+        PlayPauseCommand = new RelayCommand(() => Preview.TogglePlay());
+        SetRangeStartCommand = new RelayCommand(() => SetRangeEdge(isStart: true));
+        SetRangeEndCommand = new RelayCommand(() => SetRangeEdge(isStart: false));
+        ClearRangeCommand = new RelayCommand(ClearRange, () => HasRange);
+        ExportCommand = new RelayCommand(Export, () => !_isExporting);
+        CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
 
         RebuildFromModel();
     }
+
+    public PreviewViewModel Preview { get; }
+    public EffectsPanelViewModel Effects { get; }
 
     public ObservableCollection<TrackViewModel> Tracks { get; } = new();
     public ObservableCollection<MediaItemViewModel> MediaItems { get; } = new();
@@ -78,6 +142,12 @@ public class MainViewModel : ObservableObject
     public RelayCommand DeleteSelectedCommand { get; }
     public RelayCommand ZoomInCommand { get; }
     public RelayCommand ZoomOutCommand { get; }
+    public RelayCommand PlayPauseCommand { get; }
+    public RelayCommand SetRangeStartCommand { get; }
+    public RelayCommand SetRangeEndCommand { get; }
+    public RelayCommand ClearRangeCommand { get; }
+    public RelayCommand ExportCommand { get; }
+    public RelayCommand CancelExportCommand { get; }
 
     public double PixelsPerSecond => _pixelsPerSecond;
 
@@ -108,6 +178,173 @@ public class MainViewModel : ObservableObject
 
     private string ProjectFileFilter =>
         $"Video Editor Project (*{_projects.DefaultExtension})|*{_projects.DefaultExtension}|All Files (*.*)|*.*";
+
+    // ---------- Playhead ----------
+
+    public double PlayheadX => Preview.PlayheadTime * _pixelsPerSecond;
+
+    /// <summary>Moves the playhead (timeline click / ruler scrub) and renders that frame.</summary>
+    public void SeekTo(double time) => Preview.Seek(Math.Max(0, time));
+
+    /// <summary>Debounced preview re-render (slider drags, effect edits…).</summary>
+    public void RequestPreviewRefresh()
+    {
+        _previewRefreshTimer.Stop();
+        _previewRefreshTimer.Start();
+    }
+
+    // ---------- Export range (yellow bars) ----------
+
+    private TimeRange? CurrentRange => _rangeDragPreview ?? _projects.Current.ExportRange;
+
+    public bool HasRange => CurrentRange != null;
+    public double RangeStartX => (CurrentRange?.Start ?? 0) * _pixelsPerSecond;
+    public double RangeEndX => (CurrentRange?.End ?? 0) * _pixelsPerSecond;
+    public double RangeWidth => Math.Max(0, RangeEndX - RangeStartX);
+
+    public string RangeLabel => CurrentRange is { } range
+        ? $"Range {FormatTime(range.Start)} – {FormatTime(range.End)}"
+        : string.Empty;
+
+    private void NotifyRangeChanged()
+    {
+        OnPropertyChanged(nameof(HasRange));
+        OnPropertyChanged(nameof(RangeStartX));
+        OnPropertyChanged(nameof(RangeEndX));
+        OnPropertyChanged(nameof(RangeWidth));
+        OnPropertyChanged(nameof(RangeLabel));
+    }
+
+    /// <summary>I / O keys: set the yellow start/end bar at the playhead.</summary>
+    private void SetRangeEdge(bool isStart)
+    {
+        var playhead = Preview.PlayheadTime;
+        var duration = Math.Max(_projects.Current.Duration, playhead + 1);
+        var current = _projects.Current.ExportRange;
+
+        var range = current?.Clone() ?? new TimeRange { Start = 0, End = duration };
+        if (isStart) range.Start = playhead;
+        else range.End = playhead;
+        CommitRange(range.Normalized());
+        StatusText = isStart
+            ? $"Export start set to {FormatTime(playhead)} (I)"
+            : $"Export end set to {FormatTime(playhead)} (O)";
+    }
+
+    private void ClearRange()
+    {
+        if (_projects.Current.ExportRange is null) return;
+        CommitRange(null);
+        StatusText = "Export range cleared — exports now cover the whole project";
+    }
+
+    /// <summary>Live visual update while a yellow bar is being dragged (no undo entries).</summary>
+    public void PreviewRangeDrag(double start, double end)
+    {
+        _rangeDragPreview = new TimeRange { Start = start, End = end }.Normalized();
+        NotifyRangeChanged();
+    }
+
+    /// <summary>Finishes a yellow-bar drag with a single undoable command.</summary>
+    public void CommitRangeDrag()
+    {
+        if (_rangeDragPreview is not { } preview) return;
+        _rangeDragPreview = null;
+        CommitRange(preview);
+    }
+
+    private void CommitRange(TimeRange? newRange)
+    {
+        var old = _projects.Current.ExportRange;
+        var project = _projects.Current;
+        _undoRedo.ExecuteCommand(new SetValueCommand<TimeRange?>(
+            newRange is null ? "Clear export range" : "Set export range",
+            old, newRange, r => project.ExportRange = r));
+    }
+
+    // ---------- Export ----------
+
+    public bool IsExporting
+    {
+        get => _isExporting;
+        private set
+        {
+            if (SetProperty(ref _isExporting, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    public double ExportProgress
+    {
+        get => _exportProgress;
+        private set => SetProperty(ref _exportProgress, value);
+    }
+
+    private async void Export()
+    {
+        if (!_ffmpeg.IsAvailable)
+        {
+            MessageBox.Show(
+                "FFmpeg was not found, so the project cannot be rendered.\n\n" +
+                "Install FFmpeg (and ffprobe) and either add it to PATH, put it in " +
+                "tools\\ffmpeg\\ next to the app, or set the VIDEOEDITOR_FFMPEG_DIR " +
+                $"environment variable.\n\nDownload: {FFmpegLocator.DownloadUrl}",
+                "FFmpeg Missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_projects.Current.Duration <= 0.01)
+        {
+            StatusText = "Nothing to export — the timeline is empty";
+            return;
+        }
+
+        var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
+        try { Directory.CreateDirectory(exportDir); } catch { exportDir = string.Empty; }
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "MP4 Video (*.mp4)|*.mp4",
+            FileName = _projects.Current.Settings.Name + ".mp4",
+            InitialDirectory = exportDir
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        var settings = ExportSettings.FromProject(_projects.Current, dialog.FileName);
+        var rangeText = settings.Range != null ? " (selected range)" : " (whole project)";
+
+        IsExporting = true;
+        ExportProgress = 0;
+        _exportCts = new CancellationTokenSource();
+        var progress = new Progress<double>(p =>
+        {
+            ExportProgress = p;
+            StatusText = $"Exporting{rangeText}… {p:P0}";
+        });
+
+        try
+        {
+            await _exporter.ExportAsync(_projects.Current, settings, progress, _exportCts.Token);
+            StatusText = $"Exported to {Path.GetFileName(dialog.FileName)}";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Export cancelled";
+            TryDelete(dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Export failed";
+            MessageBox.Show($"The video could not be exported.\n\n{ex.Message}",
+                "Export Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsExporting = false;
+            ExportProgress = 0;
+            _exportCts = null;
+        }
+    }
 
     // ---------- Project lifecycle ----------
 
@@ -189,18 +426,24 @@ public class MainViewModel : ObservableObject
             Multiselect = true,
             Filter = "Media Files|*.mp4;*.mov;*.avi;*.mkv;*.webm;" +
                      "*.wav;*.mp3;*.aac;*.flac;*.ogg;" +
-                     "*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tiff|All Files (*.*)|*.*"
+                     "*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tiff|" +
+                     "Effects (*.vefx)|*.vefx|All Files (*.*)|*.*"
         };
         if (dialog.ShowDialog() != true) return;
         ImportFiles(dialog.FileNames);
     }
 
-    /// <summary>Imports files into the media library (used by the Import button and Explorer drops).</summary>
+    /// <summary>Imports files into the media library; .vefx files go to the effect catalog.</summary>
     public void ImportFiles(IEnumerable<string> paths)
     {
-        var items = BuildImportItems(paths, out var skipped);
+        var allPaths = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var vefxFiles = allPaths.Where(IsVefx).ToList();
+        if (vefxFiles.Count > 0) Effects.ImportVefxFiles(vefxFiles);
+
+        var items = BuildImportItems(allPaths.Where(p => !IsVefx(p)), out var skipped);
         if (items.Count == 0)
         {
+            if (vefxFiles.Count > 0) return; // status already set by the effect import
             StatusText = skipped > 0
                 ? $"Nothing imported — {skipped} unsupported or duplicate file(s)"
                 : "Nothing to import";
@@ -213,11 +456,22 @@ public class MainViewModel : ObservableObject
         _undoRedo.ExecuteCommand(commands.Count == 1
             ? commands[0]
             : new CompositeCommand($"Import {commands.Count} files", commands));
+        EnrichNewMedia(items);
 
         StatusText = skipped > 0
             ? $"Imported {items.Count} file(s), skipped {skipped}"
             : $"Imported {items.Count} file(s)";
     }
+
+    private static bool IsVefx(string path) =>
+        string.Equals(Path.GetExtension(path), ".vefx", StringComparison.OrdinalIgnoreCase);
+
+    private void EnrichNewMedia(IEnumerable<MediaItem> items) =>
+        _enrichment.Enrich(items, _projects.Current, DefaultEventDuration, () =>
+        {
+            RebuildFromModel();
+            RequestPreviewRefresh();
+        });
 
     private List<MediaItem> BuildImportItems(IEnumerable<string> paths, out int skipped)
     {
@@ -273,9 +527,12 @@ public class MainViewModel : ObservableObject
             return;
         }
 
-        var evt = CreateEvent(media, time);
+        var commands = new List<IEditorCommand>();
+        var evt = BuildPlacement(media, track, Math.Max(0, time), commands);
         _selectedEventId = evt.Id;
-        _undoRedo.ExecuteCommand(new AddEventCommand(track, evt));
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Add '{media.Name}' to timeline", commands));
         StatusText = $"Placed '{media.Name}' at {FormatTime(evt.Start)}";
     }
 
@@ -286,12 +543,18 @@ public class MainViewModel : ObservableObject
         if (track is null) return;
 
         var commands = new List<IEditorCommand>();
+        var newItems = new List<MediaItem>();
         var cursor = Math.Max(0, time);
         int placed = 0, imported = 0, skipped = 0;
         Guid? lastEventId = null;
 
         foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            if (IsVefx(path))
+            {
+                Effects.ImportVefxFiles(new[] { path });
+                continue;
+            }
             if (!SupportedExtensions.Contains(Path.GetExtension(path)))
             {
                 skipped++;
@@ -304,13 +567,13 @@ public class MainViewModel : ObservableObject
             {
                 item = CreateMediaItem(path);
                 commands.Add(new AddMediaCommand(_projects.Current, item));
+                newItems.Add(item);
                 imported++;
             }
 
             if (IsCompatible(item.Type, track.Type))
             {
-                var evt = CreateEvent(item, cursor);
-                commands.Add(new AddEventCommand(track, evt));
+                var evt = BuildPlacement(item, track, cursor, commands);
                 cursor = evt.End;
                 placed++;
                 lastEventId = evt.Id;
@@ -319,7 +582,7 @@ public class MainViewModel : ObservableObject
 
         if (commands.Count == 0)
         {
-            StatusText = skipped > 0 ? $"Skipped {skipped} unsupported file(s)" : "Nothing to add";
+            if (skipped > 0) StatusText = $"Skipped {skipped} unsupported file(s)";
             return;
         }
 
@@ -327,6 +590,7 @@ public class MainViewModel : ObservableObject
         _undoRedo.ExecuteCommand(commands.Count == 1
             ? commands[0]
             : new CompositeCommand("Add media to timeline", commands));
+        EnrichNewMedia(newItems);
 
         var parts = new List<string>();
         if (placed > 0) parts.Add($"placed {placed} clip(s)");
@@ -352,6 +616,37 @@ public class MainViewModel : ObservableObject
         DropMediaOnTrack(media.Id, track.Id, time);
     }
 
+    /// <summary>
+    /// Plans the placement of a clip: the event itself plus — for video files
+    /// with sound — a linked audio event on an audio track (VEGAS-style pairs).
+    /// </summary>
+    private TimelineEvent BuildPlacement(
+        MediaItem media, Track track, double start, List<IEditorCommand> commands)
+    {
+        var evt = CreateEvent(media, start);
+        commands.Add(new AddEventCommand(track, evt));
+
+        var wantsLinkedAudio = media.Type == MediaType.Video &&
+                               track.Type != TrackType.Audio &&
+                               media.HasAudio != false; // unknown (not probed yet) counts as yes
+        if (wantsLinkedAudio)
+        {
+            var audioTrack = _projects.Current.Tracks.FirstOrDefault(t => t.Type == TrackType.Audio);
+            if (audioTrack is null)
+            {
+                audioTrack = new Track { Name = "A1", Type = TrackType.Audio };
+                commands.Add(new AddTrackCommand(_projects.Current, audioTrack));
+            }
+
+            var audioEvent = CreateEvent(media, start);
+            audioEvent.LinkedEventId = evt.Id;
+            evt.LinkedEventId = audioEvent.Id;
+            commands.Add(new AddEventCommand(audioTrack, audioEvent));
+        }
+
+        return evt;
+    }
+
     private static TimelineEvent CreateEvent(MediaItem media, double start)
     {
         var duration = media.DurationSeconds ?? DefaultEventDuration;
@@ -366,6 +661,71 @@ public class MainViewModel : ObservableObject
         };
     }
 
+    // ---------- Moving events ----------
+
+    /// <summary>
+    /// Snaps a desired start time to nearby event edges, the playhead and the
+    /// yellow range bars (within ~8 px at the current zoom).
+    /// </summary>
+    public double SnapTime(double desiredStart, double eventDuration, Guid movingEventId)
+    {
+        var threshold = 8.0 / _pixelsPerSecond;
+        var moving = _projects.Current.FindEvent(movingEventId)?.Event;
+        var linkedId = moving?.LinkedEventId;
+
+        var snapPoints = new List<double> { 0, Preview.PlayheadTime };
+        if (_projects.Current.ExportRange is { } range)
+        {
+            snapPoints.Add(range.Start);
+            snapPoints.Add(range.End);
+        }
+        foreach (var track in _projects.Current.Tracks)
+            foreach (var evt in track.Events)
+            {
+                if (evt.Id == movingEventId || evt.Id == linkedId) continue;
+                snapPoints.Add(evt.Start);
+                snapPoints.Add(evt.End);
+            }
+
+        var best = desiredStart;
+        var bestDistance = threshold;
+        foreach (var point in snapPoints)
+        {
+            // Snap the clip's start edge…
+            var distance = Math.Abs(point - desiredStart);
+            if (distance < bestDistance) { bestDistance = distance; best = point; }
+            // …or its end edge.
+            distance = Math.Abs(point - (desiredStart + eventDuration));
+            if (distance < bestDistance) { bestDistance = distance; best = point - eventDuration; }
+        }
+        return Math.Max(0, best);
+    }
+
+    /// <summary>Moves an event (and its linked partner) to a new start — one undo step.</summary>
+    public void MoveEvent(Guid eventId, double newStart)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var (track, evt) = found;
+        newStart = Math.Max(0, newStart);
+        if (Math.Abs(newStart - evt.Start) < 0.0005) return;
+
+        var commands = new List<IEditorCommand> { new MoveEventCommand(evt, track, track, newStart) };
+
+        if (evt.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked)
+        {
+            var delta = newStart - evt.Start;
+            commands.Add(new MoveEventCommand(
+                linked.Event, linked.Track, linked.Track, Math.Max(0, linked.Event.Start + delta)));
+        }
+
+        _selectedEventId = eventId;
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Move '{evt.Name}'", commands));
+        StatusText = $"Moved '{evt.Name}' to {FormatTime(newStart)}";
+    }
+
     // ---------- Selection ----------
 
     public void SelectEvent(Guid? eventId)
@@ -374,18 +734,128 @@ public class MainViewModel : ObservableObject
         foreach (var track in Tracks)
             foreach (var evt in track.Events)
                 evt.IsSelected = evt.Id == eventId;
+        RefreshSelectionPanels();
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    public Guid? SelectedEventId => _selectedEventId;
+
+    private SelectedEventContext? GetSelectedContext()
+    {
+        if (_selectedEventId is not Guid id) return null;
+        if (_projects.Current.FindEvent(id) is not { } found) return null;
+
+        var contentType = found.Track.Type == TrackType.Audio
+            ? MediaType.Audio
+            : _projects.Current.Media.FindById(found.Event.MediaId)?.Type ?? MediaType.Video;
+        return new SelectedEventContext(found.Event, found.Track, contentType);
+    }
+
+    private void RefreshSelectionPanels()
+    {
+        Effects.RefreshSelection();
+        OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(SelectedEventName));
+        OnPropertyChanged(nameof(SelectedHasVolume));
+        OnPropertyChanged(nameof(SelectedVolumePercent));
+        OnPropertyChanged(nameof(SelectedVolumeLabel));
     }
 
     private void DeleteSelected()
     {
         if (_selectedEventId is not Guid id) return;
-        var found = _projects.Current.FindEvent(id);
-        if (found is null) return;
+        if (_projects.Current.FindEvent(id) is not { } found) return;
+
+        var commands = new List<IEditorCommand> { new RemoveEventCommand(found.Track, found.Event) };
+        if (found.Event.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked)
+            commands.Add(new RemoveEventCommand(linked.Track, linked.Event));
 
         _selectedEventId = null;
-        _undoRedo.ExecuteCommand(new RemoveEventCommand(found.Value.Track, found.Value.Event));
-        StatusText = $"Deleted '{found.Value.Event.Name}'";
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Delete '{found.Event.Name}'", commands));
+        StatusText = $"Deleted '{found.Event.Name}'";
+    }
+
+    // ---------- Selected event volume (0–200%) ----------
+
+    private double _volumeEditStart;
+    private bool _isEditingVolume;
+
+    public bool HasSelection => _selectedEventId != null;
+    public string SelectedEventName => GetSelectedContext()?.Event.Name ?? string.Empty;
+
+    /// <summary>
+    /// The event whose volume the panel edits: the selection itself when it is
+    /// audio, otherwise its linked audio event (adjusting a video clip's sound).
+    /// </summary>
+    private TimelineEvent? VolumeTargetEvent
+    {
+        get
+        {
+            if (GetSelectedContext() is not { } selected) return null;
+            if (selected.ContentType == MediaType.Audio) return selected.Event;
+            if (selected.Event.LinkedEventId is Guid linkedId &&
+                _projects.Current.FindEvent(linkedId) is { } linked)
+                return linked.Event;
+            return null;
+        }
+    }
+
+    public bool SelectedHasVolume => VolumeTargetEvent != null;
+
+    public double SelectedVolumePercent
+    {
+        get => Math.Round(VolumeLimits.Clamp(VolumeTargetEvent?.Volume ?? VolumeLimits.Default) * 100);
+        set
+        {
+            if (VolumeTargetEvent is not { } target) return;
+            var clamped = VolumeLimits.Clamp(value / 100.0);
+            if (Math.Abs(target.Volume - clamped) < 0.0001) return;
+            target.Volume = clamped; // live while dragging; committed on release
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedVolumeLabel));
+        }
+    }
+
+    public string SelectedVolumeLabel => $"{SelectedVolumePercent:0}%";
+
+    public void BeginSelectedVolumeEdit()
+    {
+        if (_isEditingVolume || VolumeTargetEvent is not { } target) return;
+        _isEditingVolume = true;
+        _volumeEditStart = target.Volume;
+    }
+
+    public void EndSelectedVolumeEdit()
+    {
+        if (!_isEditingVolume) return;
+        _isEditingVolume = false;
+        if (VolumeTargetEvent is not { } target) return;
+        if (Math.Abs(_volumeEditStart - target.Volume) < 0.0001) return;
+
+        var oldValue = _volumeEditStart;
+        var newValue = target.Volume;
+        target.Volume = oldValue; // the command re-applies it for a clean undo baseline
+        _undoRedo.ExecuteCommand(new SetValueCommand<double>(
+            $"Set volume of '{target.Name}' to {newValue * 100:0}%",
+            oldValue, newValue, v => target.Volume = v));
+    }
+
+    // ---------- Effects (drop target support) ----------
+
+    /// <summary>Applies an effect dragged from the panel onto an event block.</summary>
+    public void ApplyEffectToEvent(string effectId, Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+
+        var contentType = found.Track.Type == TrackType.Audio
+            ? MediaType.Audio
+            : _projects.Current.Media.FindById(found.Event.MediaId)?.Type ?? MediaType.Video;
+
+        SelectEvent(eventId);
+        Effects.ApplyEffect(effectId, found.Event, found.Track, contentType);
     }
 
     // ---------- Tracks ----------
@@ -411,6 +881,15 @@ public class MainViewModel : ObservableObject
         _undoRedo.ExecuteCommand(new SetTrackFlagCommand(track, SetTrackFlagCommand.TrackFlag.Solo, !track.Solo));
     }
 
+    private void CommitTrackVolume(Guid trackId, double oldValue, double newValue)
+    {
+        if (_projects.Current.FindTrack(trackId) is not { } track) return;
+        track.Volume = oldValue; // clean undo baseline; the command applies the new value
+        _undoRedo.ExecuteCommand(new SetValueCommand<double>(
+            $"Set {track.Name} volume to {newValue * 100:0}%",
+            oldValue, newValue, v => track.Volume = v));
+    }
+
     // ---------- Zoom ----------
 
     public void SetPixelsPerSecond(double value)
@@ -420,6 +899,7 @@ public class MainViewModel : ObservableObject
         _pixelsPerSecond = value;
         RebuildFromModel();
         OnPropertyChanged(nameof(PixelsPerSecond));
+        OnPropertyChanged(nameof(PlayheadX));
     }
 
     // ---------- Projections ----------
@@ -430,15 +910,19 @@ public class MainViewModel : ObservableObject
         TimelineWidth = Math.Max(1200, (duration + 30) * _pixelsPerSecond);
         OnPropertyChanged(nameof(TimelineWidth));
 
+        var callbacks = new TrackCallbacks(ToggleTrackMuted, ToggleTrackSolo, CommitTrackVolume);
         Tracks.Clear();
         foreach (var track in _projects.Current.Tracks)
-            Tracks.Add(new TrackViewModel(track, _pixelsPerSecond, _selectedEventId, ToggleTrackMuted, ToggleTrackSolo));
+            Tracks.Add(new TrackViewModel(
+                track, _projects.Current, _pixelsPerSecond, _selectedEventId, callbacks, _visuals));
 
         MediaItems.Clear();
         foreach (var item in _projects.Current.Media.Items)
-            MediaItems.Add(new MediaItemViewModel(item));
+            MediaItems.Add(new MediaItemViewModel(item, _visuals));
 
         RebuildRuler();
+        RefreshSelectionPanels();
+        NotifyRangeChanged();
 
         OnPropertyChanged(nameof(WindowTitle));
         OnPropertyChanged(nameof(TimelineInfoText));
@@ -471,6 +955,11 @@ public class MainViewModel : ObservableObject
     {
         try { return new FileInfo(path).Length; }
         catch { return null; }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
     }
 
     private static MediaType DetectMediaType(string path)

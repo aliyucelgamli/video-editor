@@ -11,6 +11,10 @@ public static class Program
         SplitEventTests.Register();
         SerializationTests.Register();
         ProjectServiceTests.Register();
+        EffectSystemTests.Register();
+        TimelineModelTests.Register();
+        MediaEngineTests.Register();
+        FfmpegIntegrationTests.Register();
 
         return TestRunner.RunAll();
     }
