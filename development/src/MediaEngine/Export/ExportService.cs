@@ -56,6 +56,11 @@ public class ExportService
                 return;
             }
 
+            settings.VideoEncoder = settings.UseHardwareEncoder
+                ? (await HardwareEncoders.DetectAsync(ffmpeg, settings.Format, cancellationToken)
+                    .ConfigureAwait(false))?.Encoder
+                : null;
+
             await EncodeVideoAsync(
                 project, range, settings, ffmpeg, mixedWav, width, height, frameCount, progress, cancellationToken)
                 .ConfigureAwait(false);
@@ -122,6 +127,12 @@ public class ExportService
         process.Start();
         process.BeginErrorReadLine();
 
+        // Streaming decoders per event + double buffering: frame N+1 is
+        // composed while the encoder is still swallowing frame N.
+        using var renderer = new SequentialCompositor(_locator, _compositor);
+        var buffers = new[] { new byte[width * height * 4], new byte[width * height * 4] };
+        var pendingWrite = Task.CompletedTask;
+
         try
         {
             var stdin = process.StandardInput.BaseStream;
@@ -129,11 +140,16 @@ public class ExportService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var time = range.Start + frame / settings.FrameRate;
-                var composed = await _compositor.ComposeAsync(project, time, width, height, cancellationToken)
+                var canvas = buffers[frame & 1];
+                await renderer
+                    .RenderAsync(project, time, frame, settings.FrameRate, canvas, width, height, cancellationToken)
                     .ConfigureAwait(false);
-                await stdin.WriteAsync(composed.Bgra, cancellationToken).ConfigureAwait(false);
+
+                await pendingWrite.ConfigureAwait(false); // previous buffer is free again
+                pendingWrite = stdin.WriteAsync(canvas, 0, canvas.Length, cancellationToken);
                 progress?.Report((frame + 1) / (double)frameCount);
             }
+            await pendingWrite.ConfigureAwait(false);
             stdin.Close();
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -143,9 +159,25 @@ public class ExportService
             catch { /* already gone */ }
             throw;
         }
+        catch (IOException)
+        {
+            // The encoder died mid-stream (broken pipe) — surface its stderr.
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch { /* already gone */ }
+            throw new InvalidOperationException(EncodingFailureMessage(settings, stderr.ToString()));
+        }
 
         if (process.ExitCode != 0)
-            throw new InvalidOperationException("Video encoding failed.\n" + Tail(stderr.ToString()));
+            throw new InvalidOperationException(EncodingFailureMessage(settings, stderr.ToString()));
+    }
+
+    private static string EncodingFailureMessage(ExportSettings settings, string stderr)
+    {
+        var message = "Video encoding failed.\n" + Tail(stderr);
+        if (settings.VideoEncoder is { } encoder)
+            message += $"\n(GPU encoder '{encoder}' was used — disabling \"Hardware encoder\" " +
+                       "in the export dialog forces the CPU encoder.)";
+        return message;
     }
 
     /// <summary>Raw BGRA pipe in, chosen container/codec out (exposed for tests).</summary>
@@ -164,31 +196,59 @@ public class ExportService
             "-map", "0:v", "-map", "1:a"
         };
 
-        arguments.AddRange(settings.Format switch
-        {
-            ExportFormat.Mp4Hevc => new[]
-            {
-                "-c:v", "libx265", "-preset", "fast", "-crf", settings.Crf.ToString(),
-                "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
-                "-c:a", "aac", "-b:a", "192k"
-            },
-            ExportFormat.WebMVp9 => new[]
-            {
-                "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", Math.Min(settings.Crf + 12, 45).ToString(),
-                "-row-mt", "1", "-pix_fmt", "yuv420p",
-                "-c:a", "libopus", "-b:a", "128k"
-            },
-            _ => new[]
-            {
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", settings.Crf.ToString(),
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k"
-            }
-        });
+        arguments.AddRange(VideoCodecArguments(settings));
+        arguments.AddRange(settings.Format == ExportFormat.WebMVp9
+            ? new[] { "-c:a", "libopus", "-b:a", "128k" }
+            : new[] { "-c:a", "aac", "-b:a", "192k" });
 
         arguments.Add("-shortest");
         arguments.Add(settings.OutputPath);
         return arguments;
+    }
+
+    /// <summary>Video codec arguments: resolved GPU encoder first, CPU fallback otherwise.</summary>
+    private static IEnumerable<string> VideoCodecArguments(ExportSettings settings)
+    {
+        var crf = settings.Crf.ToString(CultureInfo.InvariantCulture);
+        var hevcTag = settings.Format == ExportFormat.Mp4Hevc
+            ? new[] { "-tag:v", "hvc1" }
+            : Array.Empty<string>();
+
+        if (settings.VideoEncoder is { } gpu && !settings.Format.IsAudioOnly())
+        {
+            // Quality knobs differ per vendor; all map the CRF slider 1:1.
+            string[] gpuArguments = gpu switch
+            {
+                "h264_nvenc" or "hevc_nvenc" => new[]
+                    { "-c:v", gpu, "-preset", "p4", "-rc", "vbr", "-cq", crf, "-b:v", "0", "-pix_fmt", "nv12" },
+                "h264_qsv" or "hevc_qsv" => new[]
+                    { "-c:v", gpu, "-preset", "fast", "-global_quality", crf, "-pix_fmt", "nv12" },
+                "h264_amf" or "hevc_amf" => new[]
+                    { "-c:v", gpu, "-quality", "balanced", "-rc", "cqp", "-qp_i", crf, "-qp_p", crf, "-pix_fmt", "nv12" },
+                _ => Array.Empty<string>()
+            };
+            if (gpuArguments.Length > 0) return gpuArguments.Concat(hevcTag);
+        }
+
+        return settings.Format switch
+        {
+            ExportFormat.Mp4Hevc => new[]
+            {
+                "-c:v", "libx265", "-preset", "fast", "-crf", crf,
+                "-pix_fmt", "yuv420p"
+            }.Concat(hevcTag),
+            ExportFormat.WebMVp9 => new[]
+            {
+                "-c:v", "libvpx-vp9", "-b:v", "0",
+                "-crf", Math.Min(settings.Crf + 12, 45).ToString(CultureInfo.InvariantCulture),
+                "-row-mt", "1", "-cpu-used", "4", "-pix_fmt", "yuv420p"
+            },
+            _ => new[]
+            {
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", crf,
+                "-pix_fmt", "yuv420p"
+            }
+        };
     }
 
     private static string Tail(string text)

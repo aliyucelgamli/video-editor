@@ -48,6 +48,13 @@ public partial class MainWindow : Window
         };
         _viewModel.NewProjectRequested += (_, _) => ShowNewProjectDialog();
         _viewModel.ExportRequested += (_, _) => ShowExportDialog();
+        _viewModel.ExportSessionStarted += (_, session) =>
+        {
+            // Deferred: ShowDialog pumps messages until the window closes, so
+            // opening it inside the event would stall the export itself.
+            _ = Dispatcher.InvokeAsync(() =>
+                new ExportProgressWindow(session) { Owner = this }.ShowDialog());
+        };
     }
 
     /// <summary>File → New: resolution/fps dialog, then a fresh project.</summary>
@@ -64,13 +71,15 @@ public partial class MainWindow : Window
     private void ShowExportDialog()
     {
         var project = _viewModel.CurrentProject;
-        var dialog = new ExportWindow(project.Settings, project.ExportRange, project.Duration)
+        var dialog = new ExportWindow(
+            project.Settings, project.ExportRange, project.Duration, _viewModel.FfmpegPath)
         {
             Owner = this
         };
         if (dialog.ShowDialog() != true) return;
         _viewModel.StartExport(
-            dialog.SelectedFormat, dialog.OutputWidth, dialog.OutputHeight, dialog.OutputFps, dialog.Crf);
+            dialog.SelectedFormat, dialog.OutputWidth, dialog.OutputHeight, dialog.OutputFps,
+            dialog.Crf, dialog.UseHardwareEncoder);
     }
 
     /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>

@@ -22,14 +22,20 @@ public partial class ExportWindow : Window
         ExportFormat.Wav
     };
 
+    private readonly string? _ffmpegPath;
+
     public ExportFormat SelectedFormat { get; private set; } = ExportFormat.Mp4H264;
     public int OutputWidth { get; private set; }
     public int OutputHeight { get; private set; }
     public double OutputFps { get; private set; }
     public int Crf { get; private set; }
+    public bool UseHardwareEncoder { get; private set; } = true;
 
-    public ExportWindow(ProjectSettings projectSettings, TimeRange? explicitRange, double projectDuration)
+    public ExportWindow(
+        ProjectSettings projectSettings, TimeRange? explicitRange, double projectDuration,
+        string? ffmpegPath = null)
     {
+        _ffmpegPath = ffmpegPath;
         InitializeComponent();
 
         FormatList.ItemsSource = Formats.Select(f => f.DisplayName()).ToList();
@@ -50,6 +56,40 @@ public partial class ExportWindow : Window
         if (FormatList.SelectedIndex < 0) return;
         SelectedFormat = Formats[FormatList.SelectedIndex];
         VideoSettings.Visibility = SelectedFormat.IsAudioOnly() ? Visibility.Collapsed : Visibility.Visible;
+        RefreshGpuPanel();
+    }
+
+    /// <summary>Shows the GPU option only for formats that have GPU encoders.</summary>
+    private void RefreshGpuPanel()
+    {
+        var offersGpu = HardwareEncoders.CandidatesFor(SelectedFormat).Count > 0;
+        GpuPanel.Visibility = offersGpu ? Visibility.Visible : Visibility.Collapsed;
+        if (offersGpu)
+            _ = UpdateGpuInfoAsync(SelectedFormat); // fire-and-forget: label fills in after probing
+    }
+
+    /// <summary>Probes for a working GPU encoder and reports it under the checkbox.</summary>
+    private async Task UpdateGpuInfoAsync(ExportFormat format)
+    {
+        if (_ffmpegPath is null)
+        {
+            GpuInfo.Text = string.Empty;
+            return;
+        }
+
+        GpuInfo.Text = "Checking for a GPU encoder…";
+        try
+        {
+            var found = await HardwareEncoders.DetectAsync(_ffmpegPath, format);
+            if (format != SelectedFormat) return; // the user switched formats meanwhile
+            GpuInfo.Text = found != null
+                ? $"{found.DisplayName} detected — export will be much faster."
+                : "No working GPU encoder found — the CPU encoder will be used.";
+        }
+        catch
+        {
+            GpuInfo.Text = string.Empty; // the label is purely informational
+        }
     }
 
     private void Export_Click(object sender, RoutedEventArgs e)
@@ -95,6 +135,7 @@ public partial class ExportWindow : Window
         OutputFps = fps;
         // Quality slider 0–100 → CRF 32 (low) … 16 (high).
         Crf = (int)Math.Round(32 - QualitySlider.Value / 100.0 * 16);
+        UseHardwareEncoder = GpuCheck.IsChecked == true;
         return true;
     }
 }

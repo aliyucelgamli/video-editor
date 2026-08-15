@@ -52,6 +52,14 @@
                     Minimum="0" Maximum="100" Value="70"/>
         </Grid>
 
+        <StackPanel x:Name="GpuPanel" Margin="0,10,0,0">
+            <CheckBox x:Name="GpuCheck" Style="{StaticResource FlatCheckBox}" IsChecked="True"
+                      Content="Hardware encoder (GPU)"
+                      ToolTip="Uses the graphics card to encode (NVENC / Quick Sync / AMF) — several times faster. Falls back to the CPU encoder when no GPU encoder works."/>
+            <TextBlock x:Name="GpuInfo" FontSize="11" Margin="22,3,0,0"
+                       Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
+        </StackPanel>
+
         <TextBlock x:Name="RangeInfo" FontSize="11" Margin="0,12,0,0"
                    Foreground="#FFFFD54F" TextWrapping="Wrap"/>
 

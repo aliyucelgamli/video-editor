@@ -241,6 +241,58 @@ public static class MediaEngineTests
             Assert.True(ArgsFor(ExportFormat.Mp4Hevc).Contains("libx265"), "h265");
             var webm = ArgsFor(ExportFormat.WebMVp9);
             Assert.True(webm.Contains("libvpx-vp9") && webm.Contains("libopus"), "vp9+opus");
+            Assert.True(webm.Contains("-cpu-used"), "vp9 uses the fast deadline knob");
+        });
+
+        TestRunner.Add("Export: GPU encoder arguments per vendor, CPU fallback otherwise", () =>
+        {
+            List<string> ArgsFor(ExportFormat format, string? encoder) => ExportService.BuildEncoderArguments(
+                new ExportSettings { Format = format, OutputPath = "out", Crf = 21, VideoEncoder = encoder },
+                "mix.wav", 320, 180);
+
+            var nvenc = ArgsFor(ExportFormat.Mp4H264, "h264_nvenc");
+            Assert.True(nvenc.Contains("h264_nvenc") && nvenc.Contains("-cq"), "nvenc uses cq rate control");
+            Assert.False(nvenc.Contains("libx264"), "no double codec with nvenc");
+
+            var hevcNvenc = ArgsFor(ExportFormat.Mp4Hevc, "hevc_nvenc");
+            Assert.True(hevcNvenc.Contains("hevc_nvenc") && hevcNvenc.Contains("hvc1"),
+                "hevc keeps the hvc1 tag on the GPU path");
+
+            Assert.True(ArgsFor(ExportFormat.Mp4H264, "h264_qsv").Contains("-global_quality"),
+                "quick sync uses global_quality");
+            var amf = ArgsFor(ExportFormat.Mp4H264, "h264_amf");
+            Assert.True(amf.Contains("-qp_i") && amf.Contains("-qp_p"), "amf uses cqp");
+
+            Assert.True(ArgsFor(ExportFormat.Mp4H264, "h264_imaginary").Contains("libx264"),
+                "unknown encoder name falls back to the CPU encoder");
+            Assert.True(ArgsFor(ExportFormat.Mp4H264, null).Contains("libx264"),
+                "no resolved encoder means CPU");
+        });
+
+        TestRunner.Add("Export: GPU encoder detection parses listings and ranks candidates", () =>
+        {
+            var listing = string.Join('\n',
+                "Encoders:",
+                " V..... = Video",
+                " A..... = Audio",
+                " ------",
+                " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC",
+                " V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)",
+                " V....D h264_amf             AMD AMF H.264 Encoder (codec h264)",
+                " A....D aac                  AAC (Advanced Audio Coding)");
+            var names = HardwareEncoders.ParseEncoderNames(listing);
+            Assert.True(names.Contains("h264_nvenc") && names.Contains("libx264") && names.Contains("aac"),
+                "encoder names parsed");
+            Assert.False(names.Contains("=") || names.Contains("------"), "legend/header lines skipped");
+
+            Assert.Equal("h264_nvenc", HardwareEncoders.CandidatesFor(ExportFormat.Mp4H264)[0].Encoder,
+                "nvenc is the preferred h264 GPU encoder");
+            Assert.Equal("hevc_nvenc", HardwareEncoders.CandidatesFor(ExportFormat.Mp4Hevc)[0].Encoder,
+                "nvenc is the preferred hevc GPU encoder");
+            Assert.Equal(0, HardwareEncoders.CandidatesFor(ExportFormat.Mp3).Count,
+                "audio-only formats have no GPU path");
+            Assert.Equal(0, HardwareEncoders.CandidatesFor(ExportFormat.WebMVp9).Count,
+                "vp9 stays on the CPU encoder");
         });
 
         TestRunner.Add("Compositor: fade factor ramps in and out", () =>

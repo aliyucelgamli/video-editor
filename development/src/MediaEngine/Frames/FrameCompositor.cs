@@ -20,6 +20,9 @@ public class FrameCompositor
         _effects = effects;
     }
 
+    /// <summary>Shared frame source (used by the export renderer's fallback path).</summary>
+    public FrameExtractor Extractor => _extractor;
+
     /// <summary>
     /// Renders the timeline at <paramref name="time"/> into a BGRA canvas.
     /// Returns a black frame when nothing is visible.
@@ -52,21 +55,34 @@ public class FrameCompositor
                     .ConfigureAwait(false);
                 if (frame is null) continue;
 
-                // Event effects animate on clip-local time, track effects on timeline time.
-                _effects.Apply(frame.Bgra, frame.Width, frame.Height, evt.Effects, time - evt.Start);
-                _effects.Apply(frame.Bgra, frame.Width, frame.Height, track.Effects, time);
-
-                var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;
-                var pixels = ApplyTransform(frame.Bgra, frame.Width, frame.Height, evt.Transform, positionScale);
-
-                var opacity = Math.Clamp(evt.Opacity, 0, 1) *
-                              Math.Clamp(track.Opacity, 0, 1) *
-                              FadeFactor(evt, time);
-                BlendOnto(canvas, pixels, opacity);
+                BlendLayerOnto(canvas, frame.Bgra, width, height, track, evt, time, project);
             }
         }
 
         return new RawFrame(canvas, width, height);
+    }
+
+    /// <summary>
+    /// Applies a layer's effect chains, transform, opacity and fades, then
+    /// blends it onto the canvas. This is the single home of the per-layer
+    /// composition math — the sequential export renderer calls it too, so
+    /// export pixels can never diverge from preview.
+    /// </summary>
+    public void BlendLayerOnto(
+        byte[] canvas, byte[] layerBgra, int width, int height,
+        Track track, TimelineEvent evt, double time, Project project)
+    {
+        // Event effects animate on clip-local time, track effects on timeline time.
+        _effects.Apply(layerBgra, width, height, evt.Effects, time - evt.Start);
+        _effects.Apply(layerBgra, width, height, track.Effects, time);
+
+        var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;
+        var pixels = ApplyTransform(layerBgra, width, height, evt.Transform, positionScale);
+
+        var opacity = Math.Clamp(evt.Opacity, 0, 1) *
+                      Math.Clamp(track.Opacity, 0, 1) *
+                      FadeFactor(evt, time);
+        BlendOnto(canvas, pixels, opacity);
     }
 
     /// <summary>One visual layer visible at a point in time (playback fast path).</summary>
@@ -120,6 +136,15 @@ public class FrameCompositor
         var centerX = (width - 1) / 2.0;
         var centerY = (height - 1) / 2.0;
 
+        // The source column only depends on the destination column, so the
+        // inverse X mapping is computed once instead of per pixel (-1 = outside).
+        var columnMap = new int[width];
+        for (var x = 0; x < width; x++)
+        {
+            var sourceX = (int)Math.Round(centerX + (x - centerX - offsetX) / scaleX);
+            columnMap[x] = sourceX >= 0 && sourceX < width ? sourceX : -1;
+        }
+
         var result = new byte[bgra.Length]; // all-transparent
         for (var y = 0; y < height; y++)
         {
@@ -127,13 +152,15 @@ public class FrameCompositor
             var sourceY = (int)Math.Round(centerY + (y - centerY - offsetY) / scaleY);
             if (sourceY < 0 || sourceY >= height) continue;
 
+            var sourceRow = sourceY * width;
+            var destinationRow = y * width;
             for (var x = 0; x < width; x++)
             {
-                var sourceX = (int)Math.Round(centerX + (x - centerX - offsetX) / scaleX);
-                if (sourceX < 0 || sourceX >= width) continue;
+                var sourceX = columnMap[x];
+                if (sourceX < 0) continue;
 
-                var from = (sourceY * width + sourceX) * 4;
-                var to = (y * width + x) * 4;
+                var from = (sourceRow + sourceX) * 4;
+                var to = (destinationRow + x) * 4;
                 result[to] = bgra[from];
                 result[to + 1] = bgra[from + 1];
                 result[to + 2] = bgra[from + 2];
@@ -182,7 +209,8 @@ public class FrameCompositor
         return Math.Clamp(factor, 0, 1);
     }
 
-    private static IEnumerable<Track> EnumerateVisualTracksBottomUp(Project project)
+    /// <summary>Visual tracks in paint order (bottom lane first, top lane last).</summary>
+    public static IEnumerable<Track> EnumerateVisualTracksBottomUp(Project project)
     {
         for (var i = project.Tracks.Count - 1; i >= 0; i--)
         {
@@ -192,22 +220,38 @@ public class FrameCompositor
         }
     }
 
-    private static void FillBlack(byte[] canvas)
+    /// <summary>Resets a canvas to opaque black.</summary>
+    public static void FillBlack(byte[] canvas)
     {
+        Array.Clear(canvas);
         for (var i = 3; i < canvas.Length; i += 4) canvas[i] = 255;
     }
 
-    private static void BlendOnto(byte[] canvas, byte[] layer, double opacity)
+    /// <summary>Alpha-blends a layer onto the canvas at the given opacity.</summary>
+    public static void BlendOnto(byte[] canvas, byte[] layer, double opacity)
     {
         opacity = Math.Clamp(opacity, 0, 1);
         if (opacity <= 0) return;
 
+        var fullOpacity = opacity >= 1.0;
         for (var i = 0; i < canvas.Length; i += 4)
         {
-            // Combine the layer's own alpha (transparent PNGs) with event opacity.
-            var alpha = opacity * layer[i + 3] / 255.0;
-            if (alpha <= 0) continue;
+            var layerAlpha = layer[i + 3];
+            if (layerAlpha == 0) continue;
 
+            // Fully opaque pixel at full opacity → straight copy (the blend
+            // below would produce exactly this, just slower).
+            if (fullOpacity && layerAlpha == 255)
+            {
+                canvas[i] = layer[i];
+                canvas[i + 1] = layer[i + 1];
+                canvas[i + 2] = layer[i + 2];
+                canvas[i + 3] = 255;
+                continue;
+            }
+
+            // Combine the layer's own alpha (transparent PNGs) with event opacity.
+            var alpha = opacity * layerAlpha / 255.0;
             canvas[i] = (byte)(canvas[i] + (layer[i] - canvas[i]) * alpha);
             canvas[i + 1] = (byte)(canvas[i + 1] + (layer[i + 1] - canvas[i + 1]) * alpha);
             canvas[i + 2] = (byte)(canvas[i + 2] + (layer[i + 2] - canvas[i + 2]) * alpha);

@@ -1,0 +1,105 @@
+<Window x:Class="VideoEditor.App.ExportProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Export"
+        Width="470" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Closing="Window_Closing" Closed="Window_Closed">
+
+    <StackPanel Margin="16,14">
+
+        <!-- ============ Running ============ -->
+        <StackPanel x:Name="RunningPanel">
+            <DockPanel>
+                <TextBlock x:Name="PercentText" DockPanel.Dock="Right" Text="0%"
+                           FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextBrush}"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Exporting…" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock x:Name="RunningFileText" FontSize="11" Margin="0,3,8,0"
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </DockPanel>
+
+            <ProgressBar x:Name="Bar" Style="{StaticResource FlatProgressBar}" Height="8"
+                         Margin="0,14,0,0" Minimum="0" Maximum="100"/>
+
+            <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                <TextBlock x:Name="TimeText" FontSize="11" VerticalAlignment="Center"
+                           Foreground="{StaticResource SubtleTextBrush}"/>
+                <Button x:Name="CancelButton" DockPanel.Dock="Right"
+                        Style="{StaticResource ToolButton}" Padding="16,7"
+                        Content="Cancel" Click="Cancel_Click"/>
+            </DockPanel>
+        </StackPanel>
+
+        <!-- ============ Completed ============ -->
+        <StackPanel x:Name="DonePanel" Visibility="Collapsed">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets"
+                           FontSize="22" Foreground="#FF6CCB5F" VerticalAlignment="Center"
+                           Margin="0,0,10,0"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Export complete" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock x:Name="DoneTimeText" FontSize="11" Margin="0,3,0,0"
+                               Foreground="{StaticResource SubtleTextBrush}"/>
+                </StackPanel>
+            </DockPanel>
+
+            <Border Background="#FF20242C" CornerRadius="6" Padding="10,8" Margin="0,12,0,0">
+                <TextBlock x:Name="DonePathText" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource SubtleTextBrush}"/>
+            </Border>
+
+            <DockPanel Margin="0,14,0,0" LastChildFill="False">
+                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}"
+                        Background="#FF1F3321" Padding="14,7" Click="Play_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE768;"
+                                   Foreground="#FF6CCB5F"/>
+                        <TextBlock Text="Play" Margin="7,0,0,0" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Button>
+                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}"
+                        Padding="14,7" Margin="8,0,0,0" Click="OpenFolder_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE838;"/>
+                        <TextBlock Text="Open folder" Margin="7,0,0,0"/>
+                    </StackPanel>
+                </Button>
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        Padding="16,7" Content="Close" Click="Close_Click"/>
+            </DockPanel>
+        </StackPanel>
+
+        <!-- ============ Failed ============ -->
+        <StackPanel x:Name="FailedPanel" Visibility="Collapsed">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="&#xE783;" FontFamily="Segoe MDL2 Assets"
+                           FontSize="22" Foreground="#FFE57373" VerticalAlignment="Center"
+                           Margin="0,0,10,0"/>
+                <TextBlock Text="Export failed" FontSize="14" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Foreground="{StaticResource TextBrush}"/>
+            </DockPanel>
+
+            <Border Background="#FF20242C" CornerRadius="6" Padding="10,8" Margin="0,12,0,0">
+                <TextBlock x:Name="FailedMessageText" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource SubtleTextBrush}"/>
+            </Border>
+
+            <DockPanel Margin="0,14,0,0" LastChildFill="False">
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        Padding="16,7" Content="Close" Click="Close_Click"/>
+            </DockPanel>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

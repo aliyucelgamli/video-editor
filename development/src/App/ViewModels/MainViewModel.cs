@@ -136,6 +136,9 @@ public class MainViewModel : ObservableObject
     /// <summary>True when ffmpeg/ffprobe could not be located — media features are off.</summary>
     public bool FfmpegMissing => !_ffmpeg.IsAvailable && !_isInstallingFfmpeg;
 
+    /// <summary>Ffmpeg executable path for view-side helpers (GPU encoder probe).</summary>
+    public string? FfmpegPath => _ffmpeg.FfmpegPath;
+
     // ---------- One-click FFmpeg install ----------
 
     private bool _isInstallingFfmpeg;
@@ -389,8 +392,15 @@ public class MainViewModel : ObservableObject
         ExportRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Raised right after an export run starts, with its live session state.
+    /// The window opens the modal progress dialog for it.
+    /// </summary>
+    public event EventHandler<ExportSessionViewModel>? ExportSessionStarted;
+
     /// <summary>Runs an export with the options confirmed in the export dialog.</summary>
-    public async void StartExport(ExportFormat format, int width, int height, double fps, int crf)
+    public async void StartExport(
+        ExportFormat format, int width, int height, double fps, int crf, bool useHardwareEncoder)
     {
         var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
         try { Directory.CreateDirectory(exportDir); } catch { exportDir = string.Empty; }
@@ -409,32 +419,38 @@ public class MainViewModel : ObservableObject
         settings.Height = height;
         settings.FrameRate = fps;
         settings.Crf = crf;
+        settings.UseHardwareEncoder = useHardwareEncoder;
         var rangeText = settings.Range != null ? " (selected range)" : " (whole project)";
 
         IsExporting = true;
         ExportProgress = 0;
         _exportCts = new CancellationTokenSource();
+        var session = new ExportSessionViewModel(dialog.FileName, () => _exportCts?.Cancel());
+        ExportSessionStarted?.Invoke(this, session);
         var progress = new Progress<double>(p =>
         {
             ExportProgress = p;
+            session.Progress = p;
             StatusText = $"Exporting{rangeText}… {p:P0}";
         });
 
         try
         {
             await _exporter.ExportAsync(_projects.Current, settings, progress, _exportCts.Token);
+            session.MarkCompleted();
             StatusText = $"Exported to {Path.GetFileName(dialog.FileName)}";
         }
         catch (OperationCanceledException)
         {
+            session.MarkCancelled();
             StatusText = "Export cancelled";
             TryDelete(dialog.FileName);
         }
         catch (Exception ex)
         {
+            // The progress window presents the failure; no MessageBox needed.
+            session.MarkFailed(ex.Message);
             StatusText = "Export failed";
-            MessageBox.Show($"The video could not be exported.\n\n{ex.Message}",
-                "Export Failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

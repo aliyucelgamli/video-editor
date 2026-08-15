@@ -56,6 +56,16 @@ public class ExportSettings
     /// <summary>Constant Rate Factor (lower = better quality, 18–28 sensible).</summary>
     public int Crf { get; set; } = 20;
 
+    /// <summary>Try a GPU encoder (NVENC / Quick Sync / AMF) when one works here.</summary>
+    public bool UseHardwareEncoder { get; set; } = true;
+
+    /// <summary>
+    /// Resolved ffmpeg video encoder ("h264_nvenc"…). Null = CPU encoder.
+    /// Filled in by <see cref="ExportService"/> via <see cref="HardwareEncoders"/>
+    /// when <see cref="UseHardwareEncoder"/> is set.
+    /// </summary>
+    public string? VideoEncoder { get; set; }
+
     /// <summary>
     /// Timeline span to export. Null = whole project.
     /// The UI passes the yellow start/end region here when one is set.

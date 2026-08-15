@@ -115,6 +115,27 @@ public static class FfmpegIntegrationTests
             Assert.True(frames >= 5, "streamed several consecutive frames");
         }
 
+        // 6b) The sequential export renderer matches the per-frame compositor
+        //     (decode timing at frame boundaries may differ by one source frame,
+        //     so one outlier out of five is tolerated).
+        {
+            using var sequential = new SequentialCompositor(locator, compositor);
+            var canvas = new byte[320 * 180 * 4];
+            var closeFrames = 0;
+            for (var i = 0; i < 5; i++)
+            {
+                var t = 0.5 + i / 24.0;
+                await sequential.RenderAsync(project, t, i, 24, canvas, 320, 180, CancellationToken.None);
+                var reference = await compositor.ComposeAsync(project, t, 320, 180);
+                long difference = 0;
+                for (var b = 0; b < canvas.Length; b++)
+                    difference += Math.Abs(canvas[b] - reference.Bgra[b]);
+                if (difference / (double)canvas.Length < 8) closeFrames++;
+            }
+            Assert.True(closeFrames >= 4,
+                $"sequential renderer stays close to the reference ({closeFrames}/5 frames)");
+        }
+
         // 7) Frame cache: repeated extraction at the same position is served from
         //    memory (fast fx-slider re-render) and immune to caller mutation.
         {

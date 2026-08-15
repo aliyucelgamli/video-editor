@@ -104,7 +104,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-14, round 4)
+## Feature state (2026-08-15, round 11)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -112,8 +112,14 @@ import; ffprobe enrichment; library thumbnails; film strips + waveforms on event
 scrub; preview monitor (Space play, video-only); effect system + Effects panel + **fx button
 and right-click menu on clips**; `.vefx` import/export + `vefx.md` guide; time-varying
 kernel support + glitch; event & track volume 0–200%; yellow export range bars (I/O keys,
-draggable); MP4 export (range or full) with progress/cancel; run.bat build-first flow.
-46 tests green.
+draggable); multi-format export (MP4 H.264/H.265, WebM VP9, MP3, WAV) with a
+**streaming export pipeline** (`SequentialCompositor`: one long-lived ffmpeg decoder per
+event instead of one process per frame, double-buffered pipe into the encoder — ~8×
+faster CPU-only, more with a GPU); **GPU encoder auto-detection** (`HardwareEncoders`:
+NVENC/Quick Sync/AMF, verified at runtime with a tiny test encode, cached; toggle in the
+export dialog); **export progress window** (percent, elapsed/ETA, cancel; on completion
+shows the output path with Play / Open folder / Close); run.bat build-first flow.
+54 tests green.
 
 Not done yet (roughly in order):
 1. Trim without rate change (plain edge drag = trim, VEGAS-style) + slip;
