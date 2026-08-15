@@ -26,6 +26,8 @@
         <KeyBinding Key="Delete" Command="{Binding DeleteSelectedCommand}"/>
         <KeyBinding Key="Space" Command="{Binding PlayPauseCommand}"/>
         <KeyBinding Key="T" Command="{Binding UnlinkSelectedCommand}"/>
+        <KeyBinding Key="S" Command="{Binding SplitAtPlayheadCommand}"/>
+        <KeyBinding Key="X" Command="{Binding SplitAtPlayheadCommand}"/>
         <KeyBinding Key="I" Command="{Binding SetRangeStartCommand}"/>
         <KeyBinding Key="O" Command="{Binding SetRangeEndCommand}"/>
         <KeyBinding Modifiers="Control+Shift" Key="R" Command="{Binding ClearRangeCommand}"/>
@@ -160,6 +162,18 @@
                              Fill="#8811381F" Stroke="#CC9CE8BB" StrokeThickness="1"
                              Visibility="{Binding HasWaveform, Converter={StaticResource BoolToVis}}"/>
 
+                    <!-- Fade envelopes: eased curve + shaded faded-away area -->
+                    <Canvas IsHitTestVisible="False">
+                        <Polygon Points="{Binding FadeInFill}" Fill="#66000000"
+                                 Visibility="{Binding HasFadeIn, Converter={StaticResource BoolToVis}}"/>
+                        <Polyline Points="{Binding FadeInLine}" Stroke="#D9FFFFFF" StrokeThickness="1.2"
+                                  Visibility="{Binding HasFadeIn, Converter={StaticResource BoolToVis}}"/>
+                        <Polygon Points="{Binding FadeOutFill}" Fill="#66000000"
+                                 Visibility="{Binding HasFadeOut, Converter={StaticResource BoolToVis}}"/>
+                        <Polyline Points="{Binding FadeOutLine}" Stroke="#D9FFFFFF" StrokeThickness="1.2"
+                                  Visibility="{Binding HasFadeOut, Converter={StaticResource BoolToVis}}"/>
+                    </Canvas>
+
                     <!-- Labels -->
                     <DockPanel Margin="6,2" VerticalAlignment="Top" IsHitTestVisible="False">
                         <TextBlock DockPanel.Dock="Right" Text="{Binding DurationLabel}"
@@ -200,6 +214,26 @@
                                 Click="EventMore_Click"
                                 ToolTip="Clip properties: speed, volume, fades, info"/>
                     </StackPanel>
+
+                    <!-- Fade grips: hold a top corner and drag inward -->
+                    <Path Data="M0,0 L14,0 L0,14 Z" Fill="#7FFFFFFF" Stretch="None"
+                          Width="14" Height="14" Tag="in"
+                          HorizontalAlignment="Left" VerticalAlignment="Top"
+                          Cursor="SizeWE"
+                          MouseLeftButtonDown="FadeGrip_MouseDown"
+                          MouseMove="FadeGrip_MouseMove"
+                          MouseLeftButtonUp="FadeGrip_MouseUp"
+                          LostMouseCapture="FadeGrip_LostCapture"
+                          ToolTip="Fade in — drag right"/>
+                    <Path Data="M14,0 L0,0 L14,14 Z" Fill="#7FFFFFFF" Stretch="None"
+                          Width="14" Height="14" Tag="out"
+                          HorizontalAlignment="Right" VerticalAlignment="Top"
+                          Cursor="SizeWE"
+                          MouseLeftButtonDown="FadeGrip_MouseDown"
+                          MouseMove="FadeGrip_MouseMove"
+                          MouseLeftButtonUp="FadeGrip_MouseUp"
+                          LostMouseCapture="FadeGrip_LostCapture"
+                          ToolTip="Fade out — drag left"/>
                 </Grid>
             </Border>
         </DataTemplate>

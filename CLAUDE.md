@@ -1,7 +1,8 @@
 # CLAUDE.md — Video Editor
 
 Guidance for AI sessions working on this repository. Read this first, then
-`vefx.md` (effect authoring) and `VEGAS_EDITOR_REFERENCE.md` (UX/editing model).
+`vefx.md` (effect authoring) and `TODO.md` (prioritized backlog). The whole
+repository — code, comments, docs — is written in English.
 
 ## What this is
 
@@ -104,7 +105,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-15, round 12)
+## Feature state (2026-08-15, round 13)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -121,17 +122,21 @@ export dialog); **export progress window** (percent, elapsed/ETA, cancel; on com
 shows the output path with Play / Open folder / Close); **visual transform editor**
 (`TransformEditorWindow`, opened by a clip's size button or "Size && Position…" menu:
 Unity-style stage gizmo — corner drag scales aspect-locked, edge drag stretches one axis,
-inner drag moves with center snapping, Esc cancels a drag; numeric panel on the right;
+inner drag moves with center snapping, **Ctrl+drag snaps to the frame's edges/corners and
+center lines with alignment guides**, Esc cancels a drag; numeric panel on the right;
 one undo step per session; math in `Application/Editing/TransformGizmo`, unit-tested);
-run.bat build-first flow. 60 tests green.
+**split at playhead** (S/X keys + context menu — selected clip incl. linked partner,
+or every clip under the playhead); **eased fades with corner grips** (hold a clip's
+top corner and drag inward; the eased opacity envelope is drawn on the clip; easing
+per fade via right-click — Linear/Sine/Quad/Cubic/Back families in `Domain/Easing`,
+audio maps to afade curves); **automatic crossfades** (same-track overlaps fade
+out/in across the overlap, video and audio identically — `Domain/Crossfade` +
+`FrameCompositor.EffectiveFadeFactor` + `AudioMixPlanner`); run.bat build-first flow.
+65 tests green.
 
-Not done yet (roughly in order):
-1. Trim without rate change (plain edge drag = trim, VEGAS-style) + slip;
-2. Split at playhead (S/X) — command exists, UI missing; 3. T = unlink A/V;
-4. Audio playback in preview (WAV pipeline or WASAPI interop — no NuGet);
-5. Fade handle UI; 6. Text events; 7. Keyframe UI; 8. Track FX UI (model ready);
-9. Proxy/preview cache; 10. Customizable shortcuts; 11. IDialogService (get MessageBox
-out of VMs); 12. Timeline virtualization for 1000+ events; 13. Dark ContextMenu styling.
+Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
+living list: items are ordered by importance and DELETED when they land (no archive;
+history lives in git and `claude/DURUM.md`).
 
 ## Coding conventions
 
@@ -189,5 +194,6 @@ Based on the Microsoft C# coding conventions, adapted to this codebase:
    (`dotnet run --project development/tests/Tests/Tests.csproj`).
 4. WPF changes: write carefully; the user compiles with `run.bat` (build-first) and
    pastes errors back.
-5. When a feature lands: update tests, the "Feature state" section above, and
-   `claude/DURUM.md`.
+5. When a feature lands: update tests, the "Feature state" section above,
+   `claude/DURUM.md`, and **delete the finished item from `TODO.md`** (add newly
+   discovered work there at the right priority instead of growing lists here).

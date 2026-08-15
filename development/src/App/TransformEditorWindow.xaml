@@ -32,6 +32,11 @@
                 <!-- selection border; handles are created in code-behind -->
                 <Rectangle x:Name="SelectionRect" Stroke="{StaticResource AccentBrush}"
                            StrokeThickness="1.5" Fill="Transparent"/>
+                <!-- Ctrl-snap alignment guides -->
+                <Line x:Name="GuideVertical" Stroke="#FFFF8A50" StrokeThickness="1"
+                      StrokeDashArray="3 2" Visibility="Collapsed"/>
+                <Line x:Name="GuideHorizontal" Stroke="#FFFF8A50" StrokeThickness="1"
+                      StrokeDashArray="3 2" Visibility="Collapsed"/>
             </Canvas>
         </Border>
 
@@ -108,7 +113,7 @@
 
                 <TextBlock FontSize="11" Margin="0,16,0,0" TextWrapping="Wrap"
                            Foreground="{StaticResource SubtleTextBrush}"
-                           Text="Drag the corners to scale (aspect stays locked), the edges to stretch one axis, and inside the frame to move. The layer snaps to the center. Esc cancels a drag."/>
+                           Text="Drag the corners to scale (aspect stays locked), the edges to stretch one axis, and inside the frame to move. Hold Ctrl while moving to snap to the frame's edges, corners and center lines. Esc cancels a drag."/>
             </StackPanel>
         </DockPanel>
     </Grid>

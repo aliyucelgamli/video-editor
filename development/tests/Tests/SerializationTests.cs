@@ -19,7 +19,7 @@ public static class SerializationTests
             {
                 MediaId = media.Id, Name = "video.mp4",
                 Start = 3.5, Duration = 10, SourceIn = 2, SourceOut = 12,
-                PlaybackRate = 1.5, FadeInDuration = 0.5, FadeOutCurve = FadeCurve.Smooth,
+                PlaybackRate = 1.5, FadeInDuration = 0.5, FadeOutEasing = EasingType.OutBack,
                 Opacity = 0.8,
                 Transform = { PositionX = 100, ScaleX = 0.5, Rotation = 45 },
                 Effects = { new EffectInstance { Type = "blur", Parameters = { ["radius"] = 4 } } },
@@ -73,7 +73,7 @@ public static class SerializationTests
                 var loadedEvt = track.Events[0];
                 Assert.Close(3.5, loadedEvt.Start, "Event start");
                 Assert.Close(1.5, loadedEvt.PlaybackRate, "Playback rate");
-                Assert.Equal(FadeCurve.Smooth, loadedEvt.FadeOutCurve, "Fade curve");
+                Assert.Equal(EasingType.OutBack, loadedEvt.FadeOutEasing, "Fade easing");
                 Assert.Close(100, loadedEvt.Transform.PositionX, "Transform.PositionX");
                 Assert.Close(45, loadedEvt.Transform.Rotation, "Transform.Rotation");
                 Assert.Equal("blur", loadedEvt.Effects[0].Type, "Effect type");

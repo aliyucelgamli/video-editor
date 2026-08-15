@@ -17,7 +17,7 @@ public class SplitEventCommand : IEditorCommand
     private readonly double _originalDuration;
     private readonly double _originalSourceOut;
     private readonly double _originalFadeOut;
-    private readonly FadeCurve _originalFadeOutCurve;
+    private readonly EasingType _originalFadeOutEasing;
 
     private TimelineEvent? _second;
 
@@ -33,7 +33,7 @@ public class SplitEventCommand : IEditorCommand
         _originalDuration = timelineEvent.Duration;
         _originalSourceOut = timelineEvent.SourceOut;
         _originalFadeOut = timelineEvent.FadeOutDuration;
-        _originalFadeOutCurve = timelineEvent.FadeOutCurve;
+        _originalFadeOutEasing = timelineEvent.FadeOutEasing;
     }
 
     public string Description => $"Split event '{_first.Name}'";
@@ -56,7 +56,8 @@ public class SplitEventCommand : IEditorCommand
             SourceOut = _originalSourceOut,
             PlaybackRate = _first.PlaybackRate,
             FadeOutDuration = _originalFadeOut,
-            FadeOutCurve = _originalFadeOutCurve,
+            FadeOutEasing = _originalFadeOutEasing,
+            FadeInEasing = _first.FadeInEasing,
             Volume = _first.Volume,
             Opacity = _first.Opacity,
             Muted = _first.Muted,
@@ -79,6 +80,6 @@ public class SplitEventCommand : IEditorCommand
         _first.Duration = _originalDuration;
         _first.SourceOut = _originalSourceOut;
         _first.FadeOutDuration = _originalFadeOut;
-        _first.FadeOutCurve = _originalFadeOutCurve;
+        _first.FadeOutEasing = _originalFadeOutEasing;
     }
 }

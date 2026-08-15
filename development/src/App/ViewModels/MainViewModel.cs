@@ -119,6 +119,7 @@ public class MainViewModel : ObservableObject
         PlayPauseCommand = new RelayCommand(() => Preview.TogglePlay());
         SetRangeStartCommand = new RelayCommand(() => SetRangeEdge(isStart: true));
         SetRangeEndCommand = new RelayCommand(() => SetRangeEdge(isStart: false));
+        SplitAtPlayheadCommand = new RelayCommand(SplitAtPlayhead);
         ClearRangeCommand = new RelayCommand(ClearRange, () => HasExplicitRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
@@ -213,6 +214,7 @@ public class MainViewModel : ObservableObject
     public RelayCommand ZoomInCommand { get; }
     public RelayCommand ZoomOutCommand { get; }
     public RelayCommand PlayPauseCommand { get; }
+    public RelayCommand SplitAtPlayheadCommand { get; }
     public RelayCommand SetRangeStartCommand { get; }
     public RelayCommand SetRangeEndCommand { get; }
     public RelayCommand ClearRangeCommand { get; }
@@ -1112,6 +1114,104 @@ public class MainViewModel : ObservableObject
 
     /// <summary>Runs an undoable command from auxiliary windows (clip properties…).</summary>
     public void RunCommand(IEditorCommand command) => _undoRedo.ExecuteCommand(command);
+
+    // ---------- Split at playhead (S / X) ----------
+
+    /// <summary>
+    /// Splits at the playhead: the selected clip (with its linked partner)
+    /// when one is selected, otherwise every clip under the playhead.
+    /// </summary>
+    private void SplitAtPlayhead()
+    {
+        var time = Preview.PlayheadTime;
+        var targets = CollectSplitTargets(time);
+        if (targets.Count == 0)
+        {
+            StatusText = "Nothing to split at the playhead";
+            return;
+        }
+
+        var commands = targets
+            .Select(t => (IEditorCommand)new SplitEventCommand(t.Track, t.Event, time))
+            .ToList();
+        RunCommand(commands.Count == 1 ? commands[0] : new CompositeCommand("Split at playhead", commands));
+        StatusText = $"Split {targets.Count} clip(s) at {FormatTime(time)}";
+        RequestPreviewRefresh();
+    }
+
+    private List<(Track Track, TimelineEvent Event)> CollectSplitTargets(double time)
+    {
+        const double margin = 0.02; // splitting razor-thin slivers helps nobody
+        var project = _projects.Current;
+        bool Splittable(TimelineEvent evt) => time > evt.Start + margin && time < evt.End - margin;
+
+        var targets = new List<(Track, TimelineEvent)>();
+        if (_selectedEventId is Guid id &&
+            project.FindEvent(id) is { } selected && Splittable(selected.Event))
+        {
+            targets.Add(selected);
+            if (selected.Event.LinkedEventId is Guid linkedId &&
+                project.FindEvent(linkedId) is { } linked && Splittable(linked.Event))
+                targets.Add(linked);
+            return targets;
+        }
+
+        foreach (var track in project.Tracks)
+            foreach (var evt in track.Events.Where(Splittable))
+                targets.Add((track, evt));
+        return targets;
+    }
+
+    // ---------- Fades (corner grips on clips) ----------
+
+    /// <summary>Live update while a fade grip is dragged — no undo entry yet.</summary>
+    public void SetEventFadeLive(Guid eventId, bool fadeIn, double seconds)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        seconds = Math.Clamp(seconds, 0, evt.Duration);
+        if (fadeIn) evt.FadeInDuration = seconds;
+        else evt.FadeOutDuration = seconds;
+        StatusText = $"{(fadeIn ? "Fade in" : "Fade out")}: {seconds:0.##}s";
+        RequestPreviewRefresh();
+    }
+
+    /// <summary>One undoable command per grip drag (issued on mouse release).</summary>
+    public void CommitEventFade(Guid eventId, bool fadeIn, double originalSeconds)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        var newValue = fadeIn ? evt.FadeInDuration : evt.FadeOutDuration;
+        if (Math.Abs(newValue - originalSeconds) < 0.001) return;
+
+        Action<double> set;
+        if (fadeIn) set = v => evt.FadeInDuration = v;
+        else set = v => evt.FadeOutDuration = v;
+
+        set(originalSeconds); // rewind so undo lands exactly where the drag started
+        RunCommand(new SetValueCommand<double>(
+            fadeIn ? "Set fade in" : "Set fade out", originalSeconds, newValue, set));
+    }
+
+    public void SetEventFadeEasing(Guid eventId, bool fadeIn, EasingType easing)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        var old = fadeIn ? evt.FadeInEasing : evt.FadeOutEasing;
+        if (old == easing) return;
+
+        RunCommand(fadeIn
+            ? new SetValueCommand<EasingType>("Set fade in easing", old, easing, v => evt.FadeInEasing = v)
+            : new SetValueCommand<EasingType>("Set fade out easing", old, easing, v => evt.FadeOutEasing = v));
+        RequestPreviewRefresh();
+    }
+
+    /// <summary>Current fade state of a clip (feeds the grip drag and the easing menu).</summary>
+    public (double FadeIn, double FadeOut, EasingType InEasing, EasingType OutEasing)? GetEventFadeInfo(Guid eventId) =>
+        _projects.Current.FindEvent(eventId) is { } found
+            ? (found.Event.FadeInDuration, found.Event.FadeOutDuration,
+                found.Event.FadeInEasing, found.Event.FadeOutEasing)
+            : null;
 
     /// <summary>Builds the view model for the Clip Properties window (size/…/info buttons).</summary>
     public EventPropertiesViewModel? CreateEventProperties(Guid eventId)

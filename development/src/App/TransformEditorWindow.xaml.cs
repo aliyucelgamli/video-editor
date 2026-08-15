@@ -191,11 +191,26 @@ public partial class TransformEditorWindow : Window
             _viewModel.ProjectWidth, _viewModel.ProjectHeight,
             _viewModel.LockAspect);
 
-        if (handle == GizmoHandle.Move)
+        if (handle == GizmoHandle.Move && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
-            var snap = CenterSnapScreen / _viewScale;
-            positionX = TransformGizmo.SnapOffset(positionX, snap);
-            positionY = TransformGizmo.SnapOffset(positionY, snap);
+            // Ctrl: magnet onto the frame's edges, corners and center lines.
+            var snapped = TransformGizmo.SnapToFrame(
+                scaleX, scaleY, positionX, positionY,
+                _viewModel.ProjectWidth, _viewModel.ProjectHeight,
+                HitRadiusScreen / _viewScale);
+            positionX = snapped.PositionX;
+            positionY = snapped.PositionY;
+            ShowGuides(snapped.GuideX, snapped.GuideY);
+        }
+        else
+        {
+            HideGuides();
+            if (handle == GizmoHandle.Move)
+            {
+                var snap = CenterSnapScreen / _viewScale;
+                positionX = TransformGizmo.SnapOffset(positionX, snap);
+                positionY = TransformGizmo.SnapOffset(positionY, snap);
+            }
         }
 
         _viewModel.SetTransform(scaleX, scaleY, positionX, positionY);
@@ -206,7 +221,45 @@ public partial class TransformEditorWindow : Window
         if (_dragHandle is null) return;
         _dragHandle = null;
         Stage.ReleaseMouseCapture();
+        HideGuides();
         e.Handled = true;
+    }
+
+    // ---------- Ctrl-snap alignment guides ----------
+
+    /// <summary>Draws the vertical/horizontal guide the layer snapped onto.</summary>
+    private void ShowGuides(double? guideX, double? guideY)
+    {
+        var frameWidth = _viewModel.ProjectWidth * _viewScale;
+        var frameHeight = _viewModel.ProjectHeight * _viewScale;
+
+        if (guideX is { } gx)
+        {
+            var x = _originX + gx * _viewScale;
+            GuideVertical.X1 = x;
+            GuideVertical.X2 = x;
+            GuideVertical.Y1 = _originY;
+            GuideVertical.Y2 = _originY + frameHeight;
+            GuideVertical.Visibility = Visibility.Visible;
+        }
+        else GuideVertical.Visibility = Visibility.Collapsed;
+
+        if (guideY is { } gy)
+        {
+            var y = _originY + gy * _viewScale;
+            GuideHorizontal.Y1 = y;
+            GuideHorizontal.Y2 = y;
+            GuideHorizontal.X1 = _originX;
+            GuideHorizontal.X2 = _originX + frameWidth;
+            GuideHorizontal.Visibility = Visibility.Visible;
+        }
+        else GuideHorizontal.Visibility = Visibility.Collapsed;
+    }
+
+    private void HideGuides()
+    {
+        GuideVertical.Visibility = Visibility.Collapsed;
+        GuideHorizontal.Visibility = Visibility.Collapsed;
     }
 
     private static Cursor CursorFor(GizmoHandle? handle) => handle switch
@@ -225,6 +278,7 @@ public partial class TransformEditorWindow : Window
         if (e.Key != Key.Escape || _dragHandle is null) return;
         _dragHandle = null;
         Stage.ReleaseMouseCapture();
+        HideGuides();
         _viewModel.SetTransform(
             _dragStartValues[0], _dragStartValues[1], _dragStartValues[2], _dragStartValues[3]);
         e.Handled = true;

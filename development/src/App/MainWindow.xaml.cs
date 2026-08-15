@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using VideoEditor.App.ViewModels;
+using VideoEditor.Domain;
 
 namespace VideoEditor.App;
 
@@ -493,6 +494,74 @@ public partial class MainWindow : Window
         _propertiesWindow.Show();
     }
 
+    private static readonly (EasingType Type, string Label)[] EasingChoices =
+    {
+        (EasingType.InOutSine, "Smooth (sine)"),
+        (EasingType.Linear, "Linear"),
+        (EasingType.InSine, "Ease in (sine)"),
+        (EasingType.OutSine, "Ease out (sine)"),
+        (EasingType.InOutQuad, "Smooth (quad)"),
+        (EasingType.InOutCubic, "Smooth (cubic)"),
+        (EasingType.InBack, "Back in (overshoot)"),
+        (EasingType.OutBack, "Back out (overshoot)")
+    };
+
+    private static MenuItem BuildEasingMenu(string header, EasingType current, Action<EasingType> apply)
+    {
+        var root = new MenuItem { Header = header };
+        foreach (var (type, label) in EasingChoices)
+        {
+            var choice = type;
+            var item = new MenuItem { Header = label, IsChecked = type == current };
+            item.Click += (_, _) => apply(choice);
+            root.Items.Add(item);
+        }
+        return root;
+    }
+
+    // ---------- Fade grips (top corners of every clip) ----------
+
+    private (Guid EventId, bool IsFadeIn, double OriginalSeconds, double StartX)? _fadeDrag;
+
+    private void FadeGrip_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement grip || grip.DataContext is not EventViewModel evt) return;
+        var isFadeIn = grip.Tag as string == "in";
+        if (_viewModel.GetEventFadeInfo(evt.Id) is not { } fade) return;
+
+        _viewModel.SelectEvent(evt.Id);
+        _fadeDrag = (evt.Id, isFadeIn,
+            isFadeIn ? fade.FadeIn : fade.FadeOut,
+            e.GetPosition(LanesScroll).X);
+        grip.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void FadeGrip_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_fadeDrag is not { } drag || sender is not FrameworkElement grip || !grip.IsMouseCaptured) return;
+
+        var deltaSeconds = (e.GetPosition(LanesScroll).X - drag.StartX) / _viewModel.PixelsPerSecond;
+        var seconds = drag.OriginalSeconds + (drag.IsFadeIn ? deltaSeconds : -deltaSeconds);
+        _viewModel.SetEventFadeLive(drag.EventId, drag.IsFadeIn, seconds);
+        (grip.DataContext as EventViewModel)?.RefreshFadeVisuals();
+        e.Handled = true;
+    }
+
+    private void FadeGrip_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_fadeDrag is null) return;
+        (sender as FrameworkElement)?.ReleaseMouseCapture(); // commit happens in LostCapture
+        e.Handled = true;
+    }
+
+    private void FadeGrip_LostCapture(object sender, MouseEventArgs e)
+    {
+        if (_fadeDrag is not { } drag) return;
+        _fadeDrag = null;
+        _viewModel.CommitEventFade(drag.EventId, drag.IsFadeIn, drag.OriginalSeconds);
+    }
+
     private void EventBlock_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not EventViewModel evt) return;
@@ -535,11 +604,23 @@ public partial class MainWindow : Window
 
             menu.Items.Add(new Separator());
 
+            var split = new MenuItem { Header = "Split at Playhead", InputGestureText = "S" };
+            split.Click += (_, _) => _viewModel.SplitAtPlayheadCommand.Execute(null);
+            menu.Items.Add(split);
+
             if (evt.IsVisual)
             {
                 var transform = new MenuItem { Header = "Size && Position…" };
                 transform.Click += (_, _) => OpenTransformEditor(evt.Id);
                 menu.Items.Add(transform);
+            }
+
+            if (_viewModel.GetEventFadeInfo(evt.Id) is { } fade)
+            {
+                menu.Items.Add(BuildEasingMenu("Fade In Easing", fade.InEasing,
+                    easing => _viewModel.SetEventFadeEasing(evt.Id, fadeIn: true, easing)));
+                menu.Items.Add(BuildEasingMenu("Fade Out Easing", fade.OutEasing,
+                    easing => _viewModel.SetEventFadeEasing(evt.Id, fadeIn: false, easing)));
             }
 
             var properties = new MenuItem { Header = "Properties…" };

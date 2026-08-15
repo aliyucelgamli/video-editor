@@ -16,9 +16,16 @@ public class EventViewModel : ObservableObject
 {
     public const double LaneContentHeight = 48;
 
+    private const int FadeCurveSamples = 24;
+
     private readonly TimelineEvent _event;
+    private readonly double _pixelsPerSecond;
     private bool _isSelected;
     private PointCollection? _waveformPoints;
+    private PointCollection? _fadeInFill;
+    private PointCollection? _fadeInLine;
+    private PointCollection? _fadeOutFill;
+    private PointCollection? _fadeOutLine;
 
     public EventViewModel(
         TimelineEvent evt,
@@ -29,6 +36,7 @@ public class EventViewModel : ObservableObject
         TimelineVisualsService? visuals)
     {
         _event = evt;
+        _pixelsPerSecond = pixelsPerSecond;
         Id = evt.Id;
         Name = evt.Name;
         StartSeconds = evt.Start;
@@ -46,6 +54,7 @@ public class EventViewModel : ObservableObject
         IsVisual = !IsAudio && media != null;
 
         ToolTip = BuildToolTip(evt);
+        RefreshFadeVisuals();
 
         if (visuals is null || media is null) return;
         if (IsAudio) LoadWaveform(media, visuals);
@@ -86,6 +95,81 @@ public class EventViewModel : ObservableObject
     {
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
+    }
+
+    // ---------- Fade envelopes (corner grips + eased curve overlay) ----------
+
+    public PointCollection? FadeInFill { get => _fadeInFill; private set => SetProperty(ref _fadeInFill, value); }
+    public PointCollection? FadeInLine { get => _fadeInLine; private set => SetProperty(ref _fadeInLine, value); }
+    public PointCollection? FadeOutFill { get => _fadeOutFill; private set => SetProperty(ref _fadeOutFill, value); }
+    public PointCollection? FadeOutLine { get => _fadeOutLine; private set => SetProperty(ref _fadeOutLine, value); }
+    public bool HasFadeIn => _fadeInLine != null;
+    public bool HasFadeOut => _fadeOutLine != null;
+
+    /// <summary>
+    /// Rebuilds the fade curve overlays from the model. Called on creation and
+    /// live while a corner grip is dragged.
+    /// </summary>
+    public void RefreshFadeVisuals()
+    {
+        var fadeInWidth = Math.Min(Width, _event.FadeInDuration * _pixelsPerSecond);
+        var fadeOutWidth = Math.Min(Width, _event.FadeOutDuration * _pixelsPerSecond);
+
+        if (fadeInWidth > 1)
+        {
+            var (fill, line) = BuildFadeShape(0, fadeInWidth, _event.FadeInEasing, isFadeIn: true);
+            FadeInFill = fill;
+            FadeInLine = line;
+        }
+        else
+        {
+            FadeInFill = null;
+            FadeInLine = null;
+        }
+
+        if (fadeOutWidth > 1)
+        {
+            var (fill, line) = BuildFadeShape(
+                Width - fadeOutWidth, fadeOutWidth, _event.FadeOutEasing, isFadeIn: false);
+            FadeOutFill = fill;
+            FadeOutLine = line;
+        }
+        else
+        {
+            FadeOutFill = null;
+            FadeOutLine = null;
+        }
+
+        OnPropertyChanged(nameof(HasFadeIn));
+        OnPropertyChanged(nameof(HasFadeOut));
+    }
+
+    /// <summary>
+    /// The eased opacity envelope over a fade region: a line following the
+    /// easing curve plus a fill covering the faded-away area above it.
+    /// </summary>
+    private static (PointCollection Fill, PointCollection Line) BuildFadeShape(
+        double left, double width, EasingType easing, bool isFadeIn)
+    {
+        var line = new List<Point>(FadeCurveSamples + 1);
+        for (var i = 0; i <= FadeCurveSamples; i++)
+        {
+            var x = left + width * i / FadeCurveSamples;
+            var progress = isFadeIn
+                ? (double)i / FadeCurveSamples
+                : 1 - (double)i / FadeCurveSamples;
+            var factor = Math.Clamp(Easing.Evaluate(easing, progress), 0, 1);
+            line.Add(new Point(x, LaneContentHeight * (1 - factor)));
+        }
+
+        // Close the fill along the top edge toward the clip's outer corner.
+        var fill = new List<Point>(line) { new(isFadeIn ? left : left + width, 0) };
+
+        var linePoints = new PointCollection(line);
+        var fillPoints = new PointCollection(fill);
+        linePoints.Freeze();
+        fillPoints.Freeze();
+        return (fillPoints, linePoints);
     }
 
     private static string BuildToolTip(TimelineEvent evt)

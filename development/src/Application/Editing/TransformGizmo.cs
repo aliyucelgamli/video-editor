@@ -124,4 +124,45 @@ public static class TransformGizmo
     /// <summary>Snaps an offset to 0 when close — centers the layer during move drags.</summary>
     public static double SnapOffset(double value, double threshold) =>
         Math.Abs(value) <= threshold ? 0 : value;
+
+    /// <summary>
+    /// Ctrl-snapping during a move drag: pulls the layer onto the project
+    /// frame's edges and center lines. Per axis, the layer's near edge, center
+    /// and far edge are matched against frame start / middle / end and the
+    /// closest hit within <paramref name="threshold"/> wins. The result also
+    /// says where to draw the alignment guides.
+    /// </summary>
+    public static SnapResult SnapToFrame(
+        double scaleX, double scaleY, double positionX, double positionY,
+        double projectWidth, double projectHeight, double threshold)
+    {
+        var rect = RectFor(scaleX, scaleY, positionX, positionY, projectWidth, projectHeight);
+
+        var (deltaX, guideX) = BestSnap(threshold,
+            (0 - rect.Left, 0),
+            (projectWidth / 2 - rect.CenterX, projectWidth / 2),
+            (projectWidth - rect.Right, projectWidth));
+        var (deltaY, guideY) = BestSnap(threshold,
+            (0 - rect.Top, 0),
+            (projectHeight / 2 - rect.CenterY, projectHeight / 2),
+            (projectHeight - rect.Bottom, projectHeight));
+
+        return new SnapResult(positionX + deltaX, positionY + deltaY, guideX, guideY);
+    }
+
+    private static (double Delta, double? Guide) BestSnap(
+        double threshold, params (double Delta, double Guide)[] candidates)
+    {
+        var best = 0.0;
+        double? guide = null;
+        var bestDistance = threshold;
+        foreach (var (delta, line) in candidates)
+        {
+            if (Math.Abs(delta) > bestDistance) continue;
+            bestDistance = Math.Abs(delta);
+            best = delta;
+            guide = line;
+        }
+        return (best, guide);
+    }
 }

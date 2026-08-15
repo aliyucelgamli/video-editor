@@ -81,7 +81,7 @@ public class FrameCompositor
 
         var opacity = Math.Clamp(evt.Opacity, 0, 1) *
                       Math.Clamp(track.Opacity, 0, 1) *
-                      FadeFactor(evt, time);
+                      EffectiveFadeFactor(track, evt, time);
         BlendOnto(canvas, pixels, opacity);
     }
 
@@ -199,14 +199,33 @@ public class FrameCompositor
     }
 
     /// <summary>Fade-in/out progress at the given timeline position (0..1).</summary>
-    public static double FadeFactor(TimelineEvent evt, double time)
+    public static double FadeFactor(TimelineEvent evt, double time) => FadeFactor(evt, time, 0, 0);
+
+    /// <summary>
+    /// Fade factor combining the event's own eased fades with implicit
+    /// crossfade durations (same-track overlaps). The longer of the explicit
+    /// and implicit duration wins per side.
+    /// </summary>
+    public static double FadeFactor(
+        TimelineEvent evt, double time, double implicitFadeIn, double implicitFadeOut)
     {
         var factor = 1.0;
-        if (evt.FadeInDuration > 0 && time < evt.Start + evt.FadeInDuration)
-            factor = Math.Min(factor, (time - evt.Start) / evt.FadeInDuration);
-        if (evt.FadeOutDuration > 0 && time > evt.End - evt.FadeOutDuration)
-            factor = Math.Min(factor, (evt.End - time) / evt.FadeOutDuration);
+        var fadeIn = Math.Max(evt.FadeInDuration, implicitFadeIn);
+        if (fadeIn > 0 && time < evt.Start + fadeIn)
+            factor = Math.Min(factor, Easing.Evaluate(evt.FadeInEasing, (time - evt.Start) / fadeIn));
+
+        var fadeOut = Math.Max(evt.FadeOutDuration, implicitFadeOut);
+        if (fadeOut > 0 && time > evt.End - fadeOut)
+            factor = Math.Min(factor, Easing.Evaluate(evt.FadeOutEasing, (evt.End - time) / fadeOut));
+
         return Math.Clamp(factor, 0, 1);
+    }
+
+    /// <summary>Explicit fades plus automatic crossfades from same-track overlaps.</summary>
+    public static double EffectiveFadeFactor(Track track, TimelineEvent evt, double time)
+    {
+        var (fadeIn, fadeOut) = Crossfade.ImplicitFades(track, evt);
+        return FadeFactor(evt, time, fadeIn, fadeOut);
     }
 
     /// <summary>Visual tracks in paint order (bottom lane first, top lane last).</summary>

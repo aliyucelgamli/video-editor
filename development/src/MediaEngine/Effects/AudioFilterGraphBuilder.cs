@@ -13,10 +13,13 @@ public static class AudioFilterGraphBuilder
 {
     /// <summary>
     /// Builds a comma-separated FFmpeg audio filter chain for one event.
-    /// Returns an empty string when nothing needs processing.
+    /// Implicit fade durations (automatic crossfades) extend the event's own
+    /// fades so the mix matches the video composite. Returns an empty string
+    /// when nothing needs processing.
     /// </summary>
     public static string BuildEventFilter(
-        TimelineEvent evt, IEffectCatalog catalog, double trackVolume, int sampleRate)
+        TimelineEvent evt, IEffectCatalog catalog, double trackVolume, int sampleRate,
+        double implicitFadeIn = 0, double implicitFadeOut = 0)
     {
         var filters = new List<string>();
 
@@ -36,16 +39,36 @@ public static class AudioFilterGraphBuilder
         if (Math.Abs(volume - 1.0) > 0.001)
             filters.Add($"volume={Num(volume)}");
 
-        if (evt.FadeInDuration > 0)
-            filters.Add($"afade=t=in:st=0:d={Num(evt.FadeInDuration)}");
-        if (evt.FadeOutDuration > 0)
+        var fadeIn = Math.Max(evt.FadeInDuration, implicitFadeIn);
+        if (fadeIn > 0)
+            filters.Add($"afade=t=in:st=0:d={Num(fadeIn)}:curve={AfadeCurveFor(evt.FadeInEasing)}");
+
+        var fadeOut = Math.Max(evt.FadeOutDuration, implicitFadeOut);
+        if (fadeOut > 0)
         {
-            var start = Math.Max(0, evt.Duration - evt.FadeOutDuration);
-            filters.Add($"afade=t=out:st={Num(start)}:d={Num(evt.FadeOutDuration)}");
+            var start = Math.Max(0, evt.Duration - fadeOut);
+            filters.Add($"afade=t=out:st={Num(start)}:d={Num(fadeOut)}:curve={AfadeCurveFor(evt.FadeOutEasing)}");
         }
 
         return string.Join(",", filters);
     }
+
+    /// <summary>
+    /// Closest FFmpeg afade curve for an easing type. Back variants overshoot,
+    /// which makes no sense for gain, so they map to the smooth half-sine.
+    /// </summary>
+    public static string AfadeCurveFor(EasingType easing) => easing switch
+    {
+        EasingType.Linear => "tri",
+        EasingType.InSine => "iqsin",
+        EasingType.OutSine => "qsin",
+        EasingType.InQuad => "qua",
+        EasingType.OutQuad => "par",
+        EasingType.InCubic => "cub",
+        EasingType.OutCubic => "cbr",
+        EasingType.InOutQuad or EasingType.InOutCubic => "losi",
+        _ => "hsin" // InOutSine and the Back family
+    };
 
     private static IEnumerable<string> FiltersForKernel(ResolvedEffectStep step, int sampleRate)
     {

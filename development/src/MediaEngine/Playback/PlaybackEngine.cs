@@ -244,7 +244,7 @@ public class PlaybackEngine
 
             var opacity = Math.Clamp(layer.Event.Opacity, 0, 1) *
                           Math.Clamp(layer.Track.Opacity, 0, 1) *
-                          FrameCompositor.FadeFactor(layer.Event, time);
+                          FrameCompositor.EffectiveFadeFactor(layer.Track, layer.Event, time);
             FrameCompositor.ApplyOpacity(display, opacity);
             return display;
         }

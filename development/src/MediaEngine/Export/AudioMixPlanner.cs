@@ -72,8 +72,9 @@ public static class AudioMixPlanner
             });
 
             var chain = new List<string> { $"aresample={sampleRate}", "aformat=channel_layouts=stereo" };
+            var (implicitFadeIn, implicitFadeOut) = Crossfade.ImplicitFades(segment.Track, segment.Event);
             var eventFilter = AudioFilterGraphBuilder.BuildEventFilter(
-                segment.Event, catalog, segment.Track.Volume, sampleRate);
+                segment.Event, catalog, segment.Track.Volume, sampleRate, implicitFadeIn, implicitFadeOut);
             if (eventFilter.Length > 0) chain.Add(eventFilter);
 
             var delayMs = (int)Math.Round(segment.TimelineOffset * 1000);

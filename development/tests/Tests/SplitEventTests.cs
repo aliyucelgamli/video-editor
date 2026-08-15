@@ -61,7 +61,7 @@ public static class SplitEventTests
             var evt = new TimelineEvent
             {
                 Name = "clip", Start = 10, Duration = 20,
-                SourceIn = 5, SourceOut = 25, FadeOutDuration = 2, FadeOutCurve = FadeCurve.Smooth
+                SourceIn = 5, SourceOut = 25, FadeOutDuration = 2, FadeOutEasing = EasingType.OutBack
             };
             track.Events.Add(evt);
 
@@ -73,7 +73,7 @@ public static class SplitEventTests
             Assert.Close(20, evt.Duration, "Duration restored");
             Assert.Close(25, evt.SourceOut, "SourceOut restored");
             Assert.Close(2, evt.FadeOutDuration, "FadeOut restored");
-            Assert.Equal(FadeCurve.Smooth, evt.FadeOutCurve, "FadeOutCurve restored");
+            Assert.Equal(EasingType.OutBack, evt.FadeOutEasing, "FadeOutEasing restored");
 
             // Redo must produce a consistent split again.
             command.Execute();
