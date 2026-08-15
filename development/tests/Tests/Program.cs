@@ -13,6 +13,7 @@ public static class Program
         ProjectServiceTests.Register();
         EffectSystemTests.Register();
         TimelineModelTests.Register();
+        TransformGizmoTests.Register();
         MediaEngineTests.Register();
         FfmpegIntegrationTests.Register();
 

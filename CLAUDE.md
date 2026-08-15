@@ -104,7 +104,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-15, round 11)
+## Feature state (2026-08-15, round 12)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -118,8 +118,12 @@ event instead of one process per frame, double-buffered pipe into the encoder �
 faster CPU-only, more with a GPU); **GPU encoder auto-detection** (`HardwareEncoders`:
 NVENC/Quick Sync/AMF, verified at runtime with a tiny test encode, cached; toggle in the
 export dialog); **export progress window** (percent, elapsed/ETA, cancel; on completion
-shows the output path with Play / Open folder / Close); run.bat build-first flow.
-54 tests green.
+shows the output path with Play / Open folder / Close); **visual transform editor**
+(`TransformEditorWindow`, opened by a clip's size button or "Size && Position…" menu:
+Unity-style stage gizmo — corner drag scales aspect-locked, edge drag stretches one axis,
+inner drag moves with center snapping, Esc cancels a drag; numeric panel on the right;
+one undo step per session; math in `Application/Editing/TransformGizmo`, unit-tested);
+run.bat build-first flow. 60 tests green.
 
 Not done yet (roughly in order):
 1. Trim without rate change (plain edge drag = trim, VEGAS-style) + slip;

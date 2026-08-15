@@ -447,11 +447,19 @@ public partial class MainWindow : Window
         _fxWindow.Show();
     }
 
-    // ---------- size + "…" buttons (Clip Properties window) ----------
+    // ---------- size + "…" buttons (transform editor / Clip Properties) ----------
 
     private EventPropertiesWindow? _propertiesWindow;
+    private TransformEditorWindow? _transformWindow;
 
-    private void EventSize_Click(object sender, RoutedEventArgs e) => OpenPropertiesFrom(sender, e);
+    /// <summary>Size button: the visual gizmo editor (audio clips fall back to Properties).</summary>
+    private void EventSize_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not EventViewModel evt) return;
+        _viewModel.SelectEvent(evt.Id);
+        OpenTransformEditor(evt.Id);
+        e.Handled = true;
+    }
 
     private void EventMore_Click(object sender, RoutedEventArgs e) => OpenPropertiesFrom(sender, e);
 
@@ -461,6 +469,19 @@ public partial class MainWindow : Window
         _viewModel.SelectEvent(evt.Id);
         OpenPropertiesWindow(evt.Id);
         e.Handled = true;
+    }
+
+    private void OpenTransformEditor(Guid eventId)
+    {
+        if (_viewModel.CreateTransformEditor(eventId) is not { } editor)
+        {
+            OpenPropertiesWindow(eventId); // audio clip — nothing visual to transform
+            return;
+        }
+        _transformWindow?.Close();
+        _transformWindow = new TransformEditorWindow(editor) { Owner = this };
+        _transformWindow.Closed += (_, _) => _transformWindow = null;
+        _transformWindow.Show();
     }
 
     private void OpenPropertiesWindow(Guid eventId)
@@ -513,6 +534,13 @@ public partial class MainWindow : Window
             menu.Items.Add(removeEffects);
 
             menu.Items.Add(new Separator());
+
+            if (evt.IsVisual)
+            {
+                var transform = new MenuItem { Header = "Size && Position…" };
+                transform.Click += (_, _) => OpenTransformEditor(evt.Id);
+                menu.Items.Add(transform);
+            }
 
             var properties = new MenuItem { Header = "Properties…" };
             properties.Click += (_, _) => OpenPropertiesWindow(evt.Id);

@@ -149,7 +149,8 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Image Source="{Binding}" Stretch="UniformToFill" Height="48"/>
+                                <Image Source="{Binding}" Stretch="UniformToFill" Height="48"
+                                       RenderOptions.BitmapScalingMode="LowQuality"/>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

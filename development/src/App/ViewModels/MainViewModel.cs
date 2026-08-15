@@ -42,6 +42,7 @@ public class MainViewModel : ObservableObject
     private readonly EffectCatalog _catalog;
     private readonly UserEffectLibrary _userEffects;
     private readonly FFmpegLocator _ffmpeg;
+    private readonly FrameExtractor _frameExtractor;
     private readonly MediaEnrichmentService _enrichment;
     private readonly TimelineVisualsService _visuals;
     private readonly ExportService _exporter;
@@ -79,14 +80,14 @@ public class MainViewModel : ObservableObject
             _catalog, new VefxSerializer(), Path.Combine(appRoot, "user", "effects"));
         _userEffects.LoadAll();
 
-        var extractor = new FrameExtractor(_ffmpeg);
+        _frameExtractor = new FrameExtractor(_ffmpeg);
         var effectPipeline = new VideoEffectPipeline(_catalog);
-        var compositor = new FrameCompositor(extractor, effectPipeline);
+        var compositor = new FrameCompositor(_frameExtractor, effectPipeline);
         _exporter = new ExportService(_ffmpeg, compositor, _catalog);
 
         var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
         Preview = new PreviewViewModel(
-            compositor, extractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio);
+            compositor, _frameExtractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio);
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -1127,6 +1128,29 @@ public class MainViewModel : ObservableObject
 
         return new EventPropertiesViewModel(
             evt, track, media, volumeTarget, _projects.Current.Settings,
+            RunCommand, RequestPreviewRefresh);
+    }
+
+    /// <summary>
+    /// Builds the visual transform editor for a clip; null for audio clips
+    /// (which have nothing to scale — the caller falls back to Properties).
+    /// The stage shows the frame under the playhead when it is inside the
+    /// clip, the clip's middle frame otherwise.
+    /// </summary>
+    public TransformEditorViewModel? CreateTransformEditor(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return null;
+        var (track, evt) = found;
+        if (ContentTypeOf(evt, track) == MediaType.Audio) return null;
+
+        var media = _projects.Current.Media.FindById(evt.MediaId);
+        var playhead = Preview.PlayheadTime;
+        var sourceTime = media?.Type == MediaType.Image ? 0
+            : evt.Contains(playhead) ? evt.SourceIn + (playhead - evt.Start) * evt.PlaybackRate
+            : evt.SourceIn + Math.Max(0, evt.SourceOut - evt.SourceIn) / 2;
+
+        return new TransformEditorViewModel(
+            evt, media, _projects.Current.Settings, _frameExtractor, sourceTime,
             RunCommand, RequestPreviewRefresh);
     }
 
