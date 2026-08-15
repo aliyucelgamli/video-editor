@@ -23,7 +23,7 @@ public class EffectDefinitionViewModel
         SourceLabel = definition.IsBuiltIn ? string.Empty : ".vefx";
         ToolTip = string.IsNullOrEmpty(Description)
             ? $"{Name} — {TargetLabel}"
-            : $"{Name} — {TargetLabel}\n{Description}\n\nSürükleyip bir klibin üzerine bırak.";
+            : $"{Name} — {TargetLabel}\n{Description}\n\nDrag it onto a clip, or click to preview it.";
     }
 
     public string Id { get; }

@@ -15,6 +15,7 @@ namespace VideoEditor.App;
 public partial class ShortcutsWindow : Window
 {
     private readonly ShortcutsViewModel _viewModel;
+    private readonly IDialogService _dialogs = new DialogService();
 
     public ShortcutsWindow(ShortcutMap map, Action onChanged)
     {
@@ -47,11 +48,13 @@ public partial class ShortcutsWindow : Window
         var conflict = _viewModel.FindConflict(gesture, row);
         if (conflict != null)
         {
-            var answer = MessageBox.Show(
-                $"\"{gesture}\" is already assigned to \"{conflict.Name}\".\n\n" +
-                $"Move it to \"{row.Name}\"?",
-                "Shortcut In Use", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (answer != MessageBoxResult.Yes)
+            var move = _dialogs.Confirm(
+                "Shortcut In Use",
+                $"\"{gesture}\" is already assigned to \"{conflict.Name}\".",
+                confirmText: $"Move to {row.Name}",
+                cancelText: "Keep As Is",
+                details: $"\"{conflict.Name}\" keeps its other shortcuts, if it has any.");
+            if (!move)
             {
                 _viewModel.StopListening();
                 return;
@@ -63,9 +66,9 @@ public partial class ShortcutsWindow : Window
 
     private void ResetAll_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(
-                "Reset every shortcut to its default?", "Keyboard Shortcuts",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        if (_dialogs.Confirm(
+                "Keyboard Shortcuts", "Reset every shortcut to its default?",
+                confirmText: "Reset All", cancelText: "Cancel", destructive: true))
             _viewModel.ResetAll();
     }
 

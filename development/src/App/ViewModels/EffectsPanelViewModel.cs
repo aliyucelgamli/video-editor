@@ -6,6 +6,7 @@ using VideoEditor.Application.Commands;
 using VideoEditor.Application.Effects;
 using VideoEditor.Domain;
 using VideoEditor.Domain.Effects;
+using VideoEditor.App.Ui;
 
 namespace VideoEditor.App.ViewModels;
 
@@ -24,6 +25,7 @@ public class EffectsPanelViewModel : ObservableObject
     private readonly Func<SelectedEventContext?> _getSelected;
     private readonly Action<string> _setStatus;
     private readonly Action _previewRefresh;
+    private readonly IDialogService _dialogs = new DialogService();
 
     public EffectsPanelViewModel(
         EffectCatalog catalog,
@@ -88,9 +90,10 @@ public class EffectsPanelViewModel : ObservableObject
             catch (Exception ex)
             {
                 failed++;
-                MessageBox.Show(
-                    $"'{System.IO.Path.GetFileName(path)}' could not be imported.\n\n{ex.Message}",
-                    "Effect Import Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _dialogs.Alert(
+                    "Effect Import Failed",
+                    $"'{System.IO.Path.GetFileName(path)}' could not be imported.",
+                    ex.Message, DialogTone.Warning);
             }
         }
 

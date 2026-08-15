@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private const double DragThreshold = 4.0;
 
     private readonly MainViewModel _viewModel = new();
+    private readonly IDialogService _dialogs = new DialogService();
 
     // Library / effect list drag-out state
     private Point _dragStart;
@@ -42,6 +43,8 @@ public partial class MainWindow : Window
     private enum RulerDragMode { None, Scrub, RangeStart, RangeEnd }
     private RulerDragMode _rulerDrag = RulerDragMode.None;
     private bool _isLaneScrubbing;
+    private double _laneSelectionAnchor;
+    private bool _laneSelectionActive;
 
     public MainWindow()
     {
@@ -206,11 +209,11 @@ public partial class MainWindow : Window
     private void MenuAbout_Click(object sender, RoutedEventArgs e)
     {
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "dev";
-        MessageBox.Show(
-            $"Video Editor {version}\n\n" +
+        _dialogs.Alert(
+            "About Video Editor",
+            $"Video Editor {version}",
             "A non-destructive video/audio editor built on .NET and FFmpeg.\n" +
-            "Docs: README.md · CLAUDE.md · TODO.md in the project folder.",
-            "About Video Editor", MessageBoxButton.OK, MessageBoxImage.Information);
+            "Docs: README.md · CLAUDE.md · TODO.md in the project folder.");
     }
 
     /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>
@@ -228,7 +231,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
-        if (!_viewModel.ConfirmDiscardChanges())
+        if (!_viewModel.ConfirmDiscardChanges(isExit: true))
             e.Cancel = true;
         base.OnClosing(e);
     }
@@ -300,10 +303,17 @@ public partial class MainWindow : Window
         DragDrop.DoDragDrop(EffectList, data, DragDropEffects.Copy);
     }
 
+    /// <summary>Selecting an effect previews it on the selected clip (nothing is added).</summary>
+    private void EffectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _viewModel.PreviewEffect((EffectList.SelectedItem as EffectDefinitionViewModel)?.Id);
+    }
+
     private void EffectList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if ((e.OriginalSource as FrameworkElement)?.DataContext is EffectDefinitionViewModel effect)
-            _viewModel.Effects.ApplyEffectToSelection(effect.Id);
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is not EffectDefinitionViewModel effect) return;
+        _viewModel.Effects.ApplyEffectToSelection(effect.Id);
+        _viewModel.ClearEffectPreview(); // it is a real chain entry now
     }
 
     private bool PassedDragThreshold(Point position) =>
@@ -355,17 +365,44 @@ public partial class MainWindow : Window
         _viewModel.SelectEvent(null);
         if (sender is not FrameworkElement lane) return;
 
-        SeekToPosition(e.GetPosition(lane).X);
+        // Click seeks; dragging from here paints a time selection (the yellow
+        // range) that play/loop and export all use.
+        var x = Math.Max(0, e.GetPosition(lane).X);
+        SeekToPosition(x);
+        _laneSelectionAnchor = x / _viewModel.PixelsPerSecond;
+        _laneSelectionActive = false;
+
         _isLaneScrubbing = lane.CaptureMouse();
         lane.MouseMove += Lane_ScrubMove;
         lane.MouseLeftButtonUp += Lane_ScrubEnd;
         lane.LostMouseCapture += Lane_ScrubLost;
     }
 
+    /// <summary>Right-click anywhere on an empty lane clears the selection.</summary>
+    private void Lane_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _viewModel.ClearRange();
+        e.Handled = true;
+    }
+
     private void Lane_ScrubMove(object sender, MouseEventArgs e)
     {
         if (!_isLaneScrubbing || e.LeftButton != MouseButtonState.Pressed) return;
-        SeekToPosition(e.GetPosition((IInputElement)sender).X);
+
+        var x = Math.Max(0, e.GetPosition((IInputElement)sender).X);
+        var time = x / _viewModel.PixelsPerSecond;
+
+        // Past the drag threshold this stops being a seek and becomes a
+        // selection sweep (the playhead stays where the click put it).
+        if (!_laneSelectionActive &&
+            Math.Abs(time - _laneSelectionAnchor) * _viewModel.PixelsPerSecond < DragThreshold)
+        {
+            SeekToPosition(x);
+            return;
+        }
+
+        _laneSelectionActive = true;
+        _viewModel.PreviewRangeSelection(_laneSelectionAnchor, time);
     }
 
     private void Lane_ScrubEnd(object sender, MouseButtonEventArgs e)
@@ -376,6 +413,14 @@ public partial class MainWindow : Window
     private void Lane_ScrubLost(object sender, MouseEventArgs e)
     {
         _isLaneScrubbing = false;
+        if (_laneSelectionActive)
+        {
+            _laneSelectionActive = false;
+            var end = Mouse.GetPosition(LanesScroll).X + LanesScroll.HorizontalOffset;
+            _viewModel.CommitRangeSelection(
+                _laneSelectionAnchor, Math.Max(0, end) / _viewModel.PixelsPerSecond);
+        }
+
         if (sender is not FrameworkElement lane) return;
         lane.MouseMove -= Lane_ScrubMove;
         lane.MouseLeftButtonUp -= Lane_ScrubEnd;

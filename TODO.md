@@ -56,10 +56,12 @@
 19. **Split of a linked pair** — cross-link the two second halves
     (`SplitEventCommand` leaves them unlinked).
 20. **Dark ContextMenu + menu dropdown styling** (top-level menu bar is dark,
-    the popup submenus still use the light system theme); **IDialogService**
-    (move MessageBox out of view models); fix stale event reference in
+    the popup submenus still use the light system theme; app dialogs are already
+    themed via DialogWindow); fix the stale event reference in
     EventPropertiesWindow.
 21. **More settings** — autosave interval, preview quality, single-key
     shortcut suppression while a text box has focus.
+    Also: a separate "playback selection" if the shared yellow range ever feels
+    wrong for export vs loop (they are one range today, VEGAS-style).
 22. **Menu InputGestureText from the ShortcutMap** — menu hints are static
     defaults today and go stale after remapping.

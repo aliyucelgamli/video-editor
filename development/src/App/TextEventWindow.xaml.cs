@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using VideoEditor.Domain;
+using VideoEditor.App.Ui;
 
 namespace VideoEditor.App;
 
@@ -40,8 +41,7 @@ public partial class TextEventWindow : Window
     {
         if (string.IsNullOrWhiteSpace(ContentBox.Text))
         {
-            MessageBox.Show("Please enter some text.", "Text",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            new DialogService().Alert("Text", "Please enter some text.", tone: DialogTone.Warning);
             return;
         }
 

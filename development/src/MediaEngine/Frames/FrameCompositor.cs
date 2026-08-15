@@ -32,7 +32,7 @@ public class FrameCompositor
     /// </summary>
     public async Task<RawFrame> ComposeAsync(
         Project project, double time, int width, int height,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, EffectPreview? preview = null)
     {
         width -= width % 2;
         height -= height % 2;
@@ -70,7 +70,7 @@ public class FrameCompositor
                     layer = frame.Bgra;
                 }
 
-                BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
+                BlendLayerOnto(canvas, layer, width, height, track, evt, time, project, preview);
             }
         }
 
@@ -85,10 +85,13 @@ public class FrameCompositor
     /// </summary>
     public void BlendLayerOnto(
         byte[] canvas, byte[] layerBgra, int width, int height,
-        Track track, TimelineEvent evt, double time, Project project)
+        Track track, TimelineEvent evt, double time, Project project,
+        EffectPreview? preview = null)
     {
         // Event effects animate on clip-local time, track effects on timeline time.
         _effects.Apply(layerBgra, width, height, evt.Effects, time - evt.Start);
+        if (preview is { } candidate && candidate.EventId == evt.Id)
+            _effects.Apply(layerBgra, width, height, new[] { candidate.Effect }, time - evt.Start);
         _effects.Apply(layerBgra, width, height, track.Effects, time);
 
         var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;

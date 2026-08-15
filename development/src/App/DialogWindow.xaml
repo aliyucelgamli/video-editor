@@ -1,0 +1,35 @@
+<Window x:Class="VideoEditor.App.DialogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="440" SizeToContent="Height"
+        MinHeight="150"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <StackPanel Margin="18,16">
+
+        <DockPanel>
+            <TextBlock x:Name="IconText" DockPanel.Dock="Left"
+                       FontFamily="Segoe MDL2 Assets" FontSize="24"
+                       VerticalAlignment="Top" Margin="0,1,14,0"/>
+            <StackPanel>
+                <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextBrush}"/>
+                <Border x:Name="DetailsBox" Background="#FF20242C" CornerRadius="6"
+                        Padding="10,8" Margin="0,10,0,0" Visibility="Collapsed">
+                    <TextBlock x:Name="DetailsText" FontSize="11" TextWrapping="Wrap"
+                               MaxHeight="180" Foreground="{StaticResource SubtleTextBrush}"/>
+                </Border>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Buttons are generated from DialogOptions (right-aligned, primary last) -->
+        <StackPanel x:Name="ButtonRow" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,18,0,0"/>
+    </StackPanel>
+</Window>

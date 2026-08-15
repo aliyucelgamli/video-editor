@@ -12,6 +12,12 @@ public class AppSettings
     /// <summary>Initial state of the export dialog's GPU encoder checkbox.</summary>
     public bool UseHardwareEncoderByDefault { get; set; } = true;
 
+    /// <summary>
+    /// Warn about unsaved changes when closing the app. Off by default —
+    /// New/Open always ask regardless, since those discard work mid-session.
+    /// </summary>
+    public bool ConfirmOnExit { get; set; }
+
     /// <summary>Keyboard shortcut overrides (action id → gestures).</summary>
     public Dictionary<string, string[]> Shortcuts { get; set; } = new();
 }

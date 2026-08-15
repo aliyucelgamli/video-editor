@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Export;
+using VideoEditor.App.Ui;
 
 namespace VideoEditor.App;
 
@@ -141,7 +142,7 @@ public partial class ExportWindow : Window
     {
         if (!TryParseSettings(out var error))
         {
-            MessageBox.Show(error, "Export", MessageBoxButton.OK, MessageBoxImage.Warning);
+            new DialogService().Alert("Export", error, tone: DialogTone.Warning);
             return;
         }
         DialogResult = true;

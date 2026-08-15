@@ -58,7 +58,8 @@ public class PlaybackEngine
         double fps,
         Action<double> onTime,
         Action<byte[], int, int> present,
-        CancellationToken token)
+        CancellationToken token,
+        Func<EffectPreview?>? previewProvider = null)
     {
         var clock = Stopwatch.StartNew();
         double Now() => origin + clock.Elapsed.TotalSeconds;
@@ -66,7 +67,8 @@ public class PlaybackEngine
         var mailbox = new FrameMailbox();
         using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var producer = Task.Run(
-            () => ProduceAsync(project, Now, duration, width, height, fps, mailbox, producerCts.Token),
+            () => ProduceAsync(
+                project, Now, duration, width, height, fps, mailbox, previewProvider, producerCts.Token),
             CancellationToken.None);
 
         try
@@ -99,7 +101,8 @@ public class PlaybackEngine
 
     private async Task ProduceAsync(
         Project project, Func<double> now, double duration,
-        int width, int height, double fps, FrameMailbox mailbox, CancellationToken token)
+        int width, int height, double fps, FrameMailbox mailbox,
+        Func<EffectPreview?>? previewProvider, CancellationToken token)
     {
         StreamingFramePipe? pipe = null;
         var pipeEventId = Guid.Empty;
@@ -168,7 +171,8 @@ public class PlaybackEngine
                     // Stale (decode slower than real time): skip presenting, keep reading.
                     if (frameTime < now() - StaleFrameSeconds) continue;
 
-                    var display = ApplyLayerEffects(frame, width, height, layer, frameTime, project);
+                    var display = ApplyLayerEffects(
+                        frame, width, height, layer, frameTime, project, previewProvider?.Invoke());
                     mailbox.Publish(display, width, height);
 
                     // Ahead of the clock → pace down to real time.
@@ -194,7 +198,8 @@ public class PlaybackEngine
                     if (imageBase != null)
                     {
                         var working = (byte[])imageBase.Clone(); // effects mutate in place
-                        var display = ApplyLayerEffects(working, width, height, layer, t, project);
+                        var display = ApplyLayerEffects(
+                            working, width, height, layer, t, project, previewProvider?.Invoke());
                         mailbox.Publish(display, width, height);
                     }
                     await Task.Delay(TimeSpan.FromSeconds(ImageRepublishSeconds), token).ConfigureAwait(false);
@@ -205,7 +210,7 @@ public class PlaybackEngine
                 try
                 {
                     var composed = await _compositor
-                        .ComposeAsync(project, t, width, height, token)
+                        .ComposeAsync(project, t, width, height, token, previewProvider?.Invoke())
                         .ConfigureAwait(false);
                     mailbox.Publish(composed.Bgra, composed.Width, composed.Height);
                 }
@@ -230,11 +235,14 @@ public class PlaybackEngine
     /// transform re-positions the layer.
     /// </summary>
     private byte[] ApplyLayerEffects(
-        byte[] frame, int width, int height, FrameCompositor.VisualLayer layer, double time, Project project)
+        byte[] frame, int width, int height, FrameCompositor.VisualLayer layer, double time, Project project,
+        EffectPreview? preview = null)
     {
         try
         {
             _effects.Apply(frame, width, height, layer.Event.Effects, time - layer.Event.Start);
+            if (preview is { } candidate && candidate.EventId == layer.Event.Id)
+                _effects.Apply(frame, width, height, new[] { candidate.Effect }, time - layer.Event.Start);
             _effects.Apply(frame, width, height, layer.Track.Effects, time);
 
             var positionScale = project.Settings.Width > 0 ? (double)width / project.Settings.Width : 1;

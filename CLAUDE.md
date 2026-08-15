@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-15, round 17)
+## Feature state (2026-08-16, round 18)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -154,7 +154,14 @@ via `App/Ui/KeyGestureText`; persisted with **user/settings.json**
 default shown in Options > Settings…); **per-type track headers** (audio: mute/solo/
 volume; visual lanes: hide + opacity slider — track opacity was already rendered,
 now it has UI; the meaningless volume slider on video lanes is gone);
-run.bat build-first flow. 72 tests green.
+**time selection + loop** (drag on an empty lane paints the yellow range, right-click
+clears it; play covers the selection and the loop toggle next to play/stop repeats it);
+**effect preview** (selecting an effect in the panel renders it on the selected clip via
+`EffectPreview` passed into the render call — never written to the model, never seen by
+export; clears on apply or selection change); **app-styled dialogs** (`App/Ui/DialogOptions`
++ `IDialogService`/`DialogService` + `DialogWindow`: caller-defined buttons, tones and
+details — every MessageBox in the app is gone); **"warn on exit" setting** (off by default;
+New/Open still always ask); run.bat build-first flow. 74 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;

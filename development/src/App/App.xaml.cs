@@ -17,9 +17,11 @@ public partial class App : System.Windows.Application
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         LogException(e.Exception);
-        MessageBox.Show(
-            "An unexpected error occurred. Technical details were written to logs/app.log.",
-            "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        new DialogService().Alert(
+            "Unexpected Error",
+            "Something went wrong, but the editor is still running.",
+            "Technical details were written to logs/app.log (Help > Open Logs Folder).",
+            DialogTone.Error);
         e.Handled = true;
     }
 

@@ -240,7 +240,8 @@
                     BorderBrush="{StaticResource EdgeBrush}" BorderThickness="0,0,0,1"
                     Width="{Binding DataContext.TimelineWidth, RelativeSource={RelativeSource AncestorType=Window}}"
                     AllowDrop="True" DragOver="Lane_DragOver" Drop="Lane_Drop"
-                    MouseLeftButtonDown="Lane_MouseLeftButtonDown">
+                    MouseLeftButtonDown="Lane_MouseLeftButtonDown"
+                    MouseRightButtonUp="Lane_MouseRightButtonUp">
                 <ItemsControl ItemsSource="{Binding Events}" ItemTemplate="{StaticResource EventTemplate}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -640,6 +641,7 @@
                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          PreviewMouseLeftButtonDown="EffectList_PreviewMouseLeftButtonDown"
                                          PreviewMouseMove="EffectList_PreviewMouseMove"
+                                         SelectionChanged="EffectList_SelectionChanged"
                                          MouseDoubleClick="EffectList_MouseDoubleClick"/>
                             </DockPanel>
 
@@ -773,6 +775,30 @@
                                     <Button Style="{StaticResource ToolButton}" Padding="10,4"
                                             Command="{Binding Preview.StopCommand}" ToolTip="Stop (back to start)">
                                         <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE71A;"/>
+                                    </Button>
+                                    <Button Padding="10,4" Margin="6,0,0,0"
+                                            Command="{Binding Preview.ToggleLoopCommand}"
+                                            ToolTip="Loop the selection (drag on an empty lane to select, right-click to clear)">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource ToolButton}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Preview.IsLooping}" Value="True">
+                                                        <Setter Property="Background" Value="#FF2C3E5C"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="&#xE8EE;" Style="{StaticResource ButtonIcon}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource ButtonIcon}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Preview.IsLooping}" Value="True">
+                                                            <Setter Property="Foreground" Value="#FF9CC3F5"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </Button>
                                 </StackPanel>
                             </DockPanel>

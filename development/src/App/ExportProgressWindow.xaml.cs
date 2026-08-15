@@ -106,8 +106,10 @@ public partial class ExportProgressWindow : Window
         }
         catch
         {
-            MessageBox.Show("The file could not be opened. It may have been moved or deleted.",
-                "Export", MessageBoxButton.OK, MessageBoxImage.Warning);
+            new DialogService().Alert(
+                "Export", "The file could not be opened.",
+                "It may have been moved, renamed or deleted since the export finished.",
+                DialogTone.Warning);
         }
     }
 

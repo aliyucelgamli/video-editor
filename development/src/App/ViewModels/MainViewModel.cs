@@ -15,6 +15,7 @@ using VideoEditor.Application.Effects;
 using VideoEditor.Application.Services;
 using VideoEditor.Application.UndoRedo;
 using VideoEditor.Domain;
+using VideoEditor.Domain.Effects;
 using VideoEditor.MediaEngine;
 using VideoEditor.MediaEngine.Effects;
 using VideoEditor.MediaEngine.Export;
@@ -48,6 +49,7 @@ public class MainViewModel : ObservableObject
     private readonly FFmpegLocator _ffmpeg;
     private readonly FrameExtractor _frameExtractor;
     private readonly SettingsService _settingsService;
+    private readonly IDialogService _dialogs = new DialogService();
     private readonly TextRasterizerService _textRasterizer;
     private readonly TextRasterCache _textRasters;
     private readonly MediaEnrichmentService _enrichment;
@@ -100,7 +102,8 @@ public class MainViewModel : ObservableObject
 
         var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
         Preview = new PreviewViewModel(
-            compositor, _frameExtractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio);
+            compositor, _frameExtractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio,
+            effectPreview: BuildEffectPreview);
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -210,11 +213,13 @@ public class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = "FFmpeg download failed";
-            MessageBox.Show(
-                "FFmpeg could not be downloaded automatically.\n\n" + ex.Message +
+            _dialogs.Alert(
+                "Download Failed",
+                "FFmpeg could not be downloaded automatically.",
+                ex.Message +
                 $"\n\nManual install: download from {FFmpegLocator.DownloadUrl} and copy " +
                 "ffmpeg.exe + ffprobe.exe into tools\\ffmpeg\\ next to run.bat.",
-                "Download Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                DialogTone.Warning);
         }
         finally
         {
@@ -295,6 +300,36 @@ public class MainViewModel : ObservableObject
         _previewRefreshTimer.Start();
     }
 
+    /// <summary>
+    /// Drag-selection on an empty lane: sets the yellow range live (no undo
+    /// entry while dragging — CommitRangeSelection closes the gesture).
+    /// </summary>
+    public void PreviewRangeSelection(double fromSeconds, double toSeconds)
+    {
+        var start = Math.Max(0, Math.Min(fromSeconds, toSeconds));
+        var end = Math.Max(0, Math.Max(fromSeconds, toSeconds));
+        _rangeDragPreview = new TimeRange { Start = start, End = end };
+        NotifyRangeChanged();
+        StatusText = $"Selection {FormatTime(start)} – {FormatTime(end)} ({end - start:0.##}s)";
+    }
+
+    /// <summary>Ends a drag-selection: too short clears it, otherwise it sticks (undoable).</summary>
+    public void CommitRangeSelection(double fromSeconds, double toSeconds)
+    {
+        _rangeDragPreview = null;
+        var start = Math.Max(0, Math.Min(fromSeconds, toSeconds));
+        var end = Math.Max(0, Math.Max(fromSeconds, toSeconds));
+
+        if (end - start < 0.05)
+        {
+            NotifyRangeChanged();
+            return;
+        }
+
+        CommitRange(new TimeRange { Start = start, End = end });
+        StatusText = $"Selection {FormatTime(start)} – {FormatTime(end)} — play loops this range";
+    }
+
     // ---------- Export range (yellow bars) ----------
 
     /// <summary>
@@ -347,11 +382,12 @@ public class MainViewModel : ObservableObject
             : $"Export end set to {FormatTime(playhead)} (O)";
     }
 
-    private void ClearRange()
+    /// <summary>Clears the selection (right-click on the timeline, or Ctrl+Shift+R).</summary>
+    public void ClearRange()
     {
         if (_projects.Current.ExportRange is null) return;
         CommitRange(null);
-        StatusText = "Export range cleared — exports now cover the whole project";
+        StatusText = "Selection cleared — play and export cover the whole project again";
     }
 
     /// <summary>Live visual update while a yellow bar is being dragged (no undo entries).</summary>
@@ -405,12 +441,13 @@ public class MainViewModel : ObservableObject
     {
         if (!_ffmpeg.IsAvailable)
         {
-            MessageBox.Show(
-                "FFmpeg was not found, so the project cannot be rendered.\n\n" +
+            _dialogs.Alert(
+                "FFmpeg Missing",
+                "FFmpeg was not found, so the project cannot be rendered.",
                 "Install FFmpeg (and ffprobe) and either add it to PATH, put it in " +
                 "tools\\ffmpeg\\ next to the app, or set the VIDEOEDITOR_FFMPEG_DIR " +
                 $"environment variable.\n\nDownload: {FFmpegLocator.DownloadUrl}",
-                "FFmpeg Missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+                DialogTone.Warning);
             return;
         }
 
@@ -499,13 +536,26 @@ public class MainViewModel : ObservableObject
 
     // ---------- Project lifecycle ----------
 
-    public bool ConfirmDiscardChanges()
+    /// <summary>
+    /// Asks before throwing away unsaved work. <paramref name="isExit"/> calls
+    /// obey the "confirm on exit" setting (off by default), while New/Open
+    /// always ask — those discard the project while the app keeps running.
+    /// </summary>
+    public bool ConfirmDiscardChanges(bool isExit = false)
     {
         if (!_projects.IsDirty) return true;
-        var result = MessageBox.Show(
-            "The project has unsaved changes. Continue and discard them?",
-            "Unsaved Changes", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        return result == MessageBoxResult.Yes;
+        if (isExit && !Settings.ConfirmOnExit) return true;
+
+        return _dialogs.Confirm(
+            "Unsaved Changes",
+            "This project has changes that have not been saved.",
+            confirmText: isExit ? "Close Anyway" : "Discard",
+            cancelText: "Keep Editing",
+            details: isExit
+                ? "Closing now discards them. You can turn this warning off or on in Options > Settings."
+                : "Continuing discards them.",
+            tone: DialogTone.Warning,
+            destructive: true);
     }
 
     /// <summary>Raised when the New Project dialog should open (handled by the window).</summary>
@@ -540,8 +590,8 @@ public class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"The project could not be opened.\n\n{ex.Message}",
-                "Open Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            _dialogs.Alert("Open Failed", "The project could not be opened.",
+                ex.Message, DialogTone.Error);
         }
     }
 
@@ -575,8 +625,8 @@ public class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"The project could not be saved.\n\n{ex.Message}",
-                "Save Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            _dialogs.Alert("Save Failed", "The project could not be saved.",
+                ex.Message, DialogTone.Error);
         }
     }
 
@@ -1027,6 +1077,7 @@ public class MainViewModel : ObservableObject
     public void SelectEvent(Guid? eventId)
     {
         _selectedEventId = eventId;
+        if (_previewEffectId != null) PreviewEffectId = null; // a preview belongs to one clip
         foreach (var track in Tracks)
             foreach (var evt in track.Events)
                 evt.IsSelected = evt.Id == eventId;
@@ -1194,6 +1245,59 @@ public class MainViewModel : ObservableObject
             foreach (var evt in track.Events.Where(Splittable))
                 targets.Add((track, evt));
         return targets;
+    }
+
+    // ---------- Effect preview (click an effect to see it before adding) ----------
+
+    private string? _previewEffectId;
+
+    /// <summary>
+    /// The effect id currently previewed on the selected clip, or null. It is
+    /// never written to the project — the renderer receives it separately, so
+    /// undo history and export stay untouched.
+    /// </summary>
+    public string? PreviewEffectId
+    {
+        get => _previewEffectId;
+        private set
+        {
+            if (SetProperty(ref _previewEffectId, value)) RequestPreviewRefresh();
+        }
+    }
+
+    /// <summary>Shows an effect on the selected clip without adding it.</summary>
+    public void PreviewEffect(string? effectId)
+    {
+        if (effectId is null)
+        {
+            PreviewEffectId = null;
+            return;
+        }
+        if (GetSelectedContext() is not { } selection)
+        {
+            StatusText = "Select a clip first to preview an effect on it";
+            return;
+        }
+        if (_catalog.Find(effectId) is not { } definition ||
+            !definition.Targets.HasFlag(EffectTargets.ForMediaType(selection.ContentType)))
+        {
+            PreviewEffectId = null;
+            return;
+        }
+
+        PreviewEffectId = effectId;
+        StatusText = $"Previewing '{definition.Name}' — double-click or drag it onto the clip to apply";
+    }
+
+    public void ClearEffectPreview() => PreviewEffectId = null;
+
+    /// <summary>Feeds the renderer: the previewed effect bound to the selected event.</summary>
+    private EffectPreview? BuildEffectPreview()
+    {
+        if (_previewEffectId is not { } id) return null;
+        if (_selectedEventId is not Guid eventId) return null;
+        if (_catalog.Find(id) is not { } definition) return null;
+        return new EffectPreview(eventId, definition.CreateInstance());
     }
 
     // ---------- Text (title) events ----------
@@ -1448,6 +1552,7 @@ public class MainViewModel : ObservableObject
     {
         if (_projects.Current.FindEvent(eventId) is not { } found) return;
         SelectEvent(eventId);
+        ClearEffectPreview(); // the real effect is in the chain now — don't render it twice
         Effects.ApplyEffect(effectId, found.Event, found.Track, ContentTypeOf(found.Event, found.Track));
     }
 

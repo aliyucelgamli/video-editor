@@ -27,6 +27,11 @@
                   Content="Prefer the hardware (GPU) encoder by default"
                   ToolTip="Initial state of the export dialog's checkbox — each export can still change it"/>
 
+        <TextBlock Text="GENERAL" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
+        <CheckBox x:Name="ConfirmExitCheck" Style="{StaticResource FlatCheckBox}" Margin="0,8,0,0"
+                  Content="Warn about unsaved changes when closing the app"
+                  ToolTip="Off by default. New Project and Open always ask, whatever this is set to."/>
+
         <TextBlock Text="KEYBOARD" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
         <Button Style="{StaticResource ToolButton}" Padding="12,6" Margin="0,8,0,0"
                 HorizontalAlignment="Left" Click="OpenShortcuts_Click">

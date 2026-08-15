@@ -33,6 +33,7 @@ public class PreviewViewModel : ObservableObject
     private CancellationTokenSource? _renderCts;
     private CancellationTokenSource? _playbackCts;
     private bool _isPlaying;
+    private bool _isLooping;
     private double _playheadTime;
     private long _renderStamp;
 
@@ -42,18 +43,31 @@ public class PreviewViewModel : ObservableObject
         VideoEffectPipeline effects,
         FFmpegLocator locator,
         Func<Project> getProject,
-        PreviewAudioService? audio = null)
+        PreviewAudioService? audio = null,
+        Func<EffectPreview?>? effectPreview = null)
     {
         _compositor = compositor;
         _engine = new PlaybackEngine(compositor, extractor, effects, locator);
         _getProject = getProject;
         _audio = audio;
+        _effectPreview = effectPreview;
         PlayPauseCommand = new RelayCommand(TogglePlay);
         StopCommand = new RelayCommand(Stop);
+        ToggleLoopCommand = new RelayCommand(() => IsLooping = !IsLooping);
     }
+
+    private readonly Func<EffectPreview?>? _effectPreview;
 
     public RelayCommand PlayPauseCommand { get; }
     public RelayCommand StopCommand { get; }
+    public RelayCommand ToggleLoopCommand { get; }
+
+    /// <summary>Repeat the selected range (or the whole project) while playing.</summary>
+    public bool IsLooping
+    {
+        get => _isLooping;
+        set => SetProperty(ref _isLooping, value);
+    }
 
     public ImageSource? CurrentFrame
     {
@@ -118,14 +132,27 @@ public class PreviewViewModel : ObservableObject
             return;
         }
 
-        var duration = _getProject().Duration;
-        if (duration <= 0.01) return;
-        if (_playheadTime >= duration - 0.02) PlayheadTime = 0;
+        var (start, end) = PlaybackSpan();
+        if (end - start <= 0.01) return;
+        // Outside the selection (or sitting on its end) → start from its beginning.
+        if (_playheadTime < start || _playheadTime >= end - 0.02) PlayheadTime = start;
 
         IsPlaying = true;
         var cts = new CancellationTokenSource();
         _playbackCts = cts;
-        _ = RunPlaybackAsync(duration, cts);
+        _ = RunPlaybackAsync(cts);
+    }
+
+    /// <summary>
+    /// What playback covers: the selected range when one is set (that is what
+    /// the loop repeats), the whole project otherwise.
+    /// </summary>
+    private (double Start, double End) PlaybackSpan()
+    {
+        var project = _getProject();
+        if (project.ExportRange?.Normalized() is { } range && range.Duration > 0.01)
+            return (Math.Max(0, range.Start), Math.Min(project.Duration, range.End));
+        return (0, project.Duration);
     }
 
     public void Stop()
@@ -141,32 +168,39 @@ public class PreviewViewModel : ObservableObject
         _audio?.Stop();
     }
 
-    private async Task RunPlaybackAsync(double duration, CancellationTokenSource cts)
+    private async Task RunPlaybackAsync(CancellationTokenSource cts)
     {
         var token = cts.Token;
         var project = _getProject();
         var (width, height) = PreviewSize(project);
-        var origin = _playheadTime;
-
-        // Audio first, then the engine's clock runs in step with it.
-        if (_audio != null)
-        {
-            await _audio.StartAsync(project, origin, token);
-            if (!IsPlaying || token.IsCancellationRequested)
-            {
-                _audio.Stop();
-                FinishPlayback(cts);
-                return;
-            }
-        }
 
         try
         {
-            await _engine.RunAsync(
-                project, origin, duration, width, height, PlaybackFps,
-                onTime: t => PlayheadTime = t,
-                present: Present,
-                token);
+            // Each pass plays [origin, end); looping starts the next pass at the
+            // span's beginning, which also re-seeks the audio.
+            do
+            {
+                var (start, end) = PlaybackSpan();
+                var origin = _playheadTime < start || _playheadTime >= end ? start : _playheadTime;
+
+                if (_audio != null)
+                {
+                    await _audio.StartAsync(project, origin, token);
+                    if (!IsPlaying || token.IsCancellationRequested) break;
+                }
+
+                await _engine.RunAsync(
+                    project, origin, end, width, height, PlaybackFps,
+                    onTime: t => PlayheadTime = t,
+                    present: Present,
+                    token,
+                    _effectPreview);
+
+                if (!IsLooping || token.IsCancellationRequested) break;
+                _audio?.Stop();
+                PlayheadTime = start;
+            }
+            while (IsPlaying && !token.IsCancellationRequested);
         }
         catch (OperationCanceledException)
         {
@@ -198,7 +232,8 @@ public class PreviewViewModel : ObservableObject
         RawFrame frame;
         try
         {
-            frame = await _compositor.ComposeAsync(project, time, width, height, cancellationToken);
+            frame = await _compositor.ComposeAsync(
+                project, time, width, height, cancellationToken, _effectPreview?.Invoke());
         }
         catch (OperationCanceledException)
         {

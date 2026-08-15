@@ -17,6 +17,7 @@ public static class Program
         FadeTests.Register();
         TrimSlipTests.Register();
         ShortcutTests.Register();
+        PreviewSelectionTests.Register();
         MediaEngineTests.Register();
         FfmpegIntegrationTests.Register();
 

@@ -22,6 +22,7 @@ public partial class SettingsWindow : Window
 
         ExportFolderBox.Text = settings.DefaultExportFolder ?? string.Empty;
         GpuDefaultCheck.IsChecked = settings.UseHardwareEncoderByDefault;
+        ConfirmExitCheck.IsChecked = settings.ConfirmOnExit;
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -38,6 +39,7 @@ public partial class SettingsWindow : Window
         var folder = ExportFolderBox.Text.Trim();
         _settings.DefaultExportFolder = folder.Length == 0 ? null : folder;
         _settings.UseHardwareEncoderByDefault = GpuDefaultCheck.IsChecked == true;
+        _settings.ConfirmOnExit = ConfirmExitCheck.IsChecked == true;
         DialogResult = true;
     }
 
