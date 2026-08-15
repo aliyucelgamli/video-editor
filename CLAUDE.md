@@ -25,8 +25,9 @@ plus edit state only.
 - **FFmpeg is an external process**, not a library. Every media feature must degrade
   gracefully when ffmpeg/ffprobe are missing (`FFmpegLocator.IsAvailable`).
 - Repo root on the user's machine: `C:\Projects\VideoEditor`. Root scripts:
-  - `run.bat` — incremental build first (skips fast when nothing changed, shows compiler
-    errors), then starts the app with `--no-build`.
+  - `run.bat` — closes a still-running instance first (it locks the output DLLs and the
+    build would fail with MSB3026), then builds incrementally (fast when nothing changed,
+    shows compiler errors) and starts the app with `--no-build`.
   - `test.bat` — runs the test suite. `build.bat` — publishes a self-contained
     `build\VideoEditor.exe`.
 
@@ -108,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-15, round 14)
+## Feature state (2026-08-15, round 17)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -142,7 +143,18 @@ edit dialog, transform gizmo works on titles, pre-rendered at export size before
 rendering); **export presets** (YouTube/TikTok/Instagram/Discord one-click in the
 export dialog); **dark native title bars** on every window (`App/Ui/DarkTitleBar`);
 shared utils (`App/Ui`: ChildWindowSlot, FrameBitmaps, TimeText; `FfmpegFormat`,
-`FrameSizes`); run.bat build-first flow. 69 tests green.
+`FrameSizes`); **menu bar** (File/Edit/View/Insert/Tools/Options/Help) over an icon-only
+toolbar with an animated gradient logo badge; **dynamic action registry + keyboard
+shortcuts** (`Application/Actions`: ActionDescriptor/EditorActions/ShortcutMap — generic
+category grouping reusable beyond shortcuts; Options > Keyboard Shortcuts… lists
+Action → Shortcut by category, click a shortcut and press keys to reassign, conflicts
+are stolen after confirmation; bindings built at runtime in `MainWindow.ApplyShortcuts`
+via `App/Ui/KeyGestureText`; persisted with **user/settings.json**
+(`Application/Settings`) which also stores the default export folder and the GPU
+default shown in Options > Settings…); **per-type track headers** (audio: mute/solo/
+volume; visual lanes: hide + opacity slider — track opacity was already rendered,
+now it has UI; the meaningless volume slider on video lanes is gone);
+run.bat build-first flow. 72 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;
@@ -167,6 +179,11 @@ Based on the Microsoft C# coding conventions, adapted to this codebase:
 - XAML: shared styles in `App.xaml` (dark theme) — reuse `ToolButton`, `FlatSlider`,
   `FlatCheckBox`, `SideTabControl`, `FlatProgressBar`. XML comments must not contain `--`.
 - Segoe MDL2 glyphs in C# as `"\uE767"` escapes (never raw PUA characters).
+- WPF traps that already bit us: a XAML `IsChecked="True"` fires its Checked handler during
+  `InitializeComponent` (fields still null); a using-imported class name can collide with an
+  `x:Name` element; a window property can hide a `FrameworkElement` member (CS0108);
+  `new KeyBinding(command, key, modifiers)` validates the gesture and throws on
+  modifier-less letters \u2014 build key bindings with property initializers instead.
 - Warnings are errors in spirit: the build must be warning-clean. Un-awaited calls that
   are intentionally fire-and-forget use `_ =` discards with a short comment.
 

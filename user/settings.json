@@ -1,0 +1,9 @@
+{
+  "defaultExportFolder": null,
+  "useHardwareEncoderByDefault": true,
+  "shortcuts": {
+    "file.export": [
+      "Oem3"
+    ]
+  }
+}

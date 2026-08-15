@@ -9,6 +9,8 @@ using VideoEditor.App.Ui;
 using VideoEditor.App.Services;
 using VideoEditor.Application.Commands;
 using VideoEditor.Application.Editing;
+using VideoEditor.Application.Actions;
+using VideoEditor.Application.Settings;
 using VideoEditor.Application.Effects;
 using VideoEditor.Application.Services;
 using VideoEditor.Application.UndoRedo;
@@ -45,6 +47,7 @@ public class MainViewModel : ObservableObject
     private readonly UserEffectLibrary _userEffects;
     private readonly FFmpegLocator _ffmpeg;
     private readonly FrameExtractor _frameExtractor;
+    private readonly SettingsService _settingsService;
     private readonly TextRasterizerService _textRasterizer;
     private readonly TextRasterCache _textRasters;
     private readonly MediaEnrichmentService _enrichment;
@@ -83,6 +86,10 @@ public class MainViewModel : ObservableObject
         _userEffects = new UserEffectLibrary(
             _catalog, new VefxSerializer(), Path.Combine(appRoot, "user", "effects"));
         _userEffects.LoadAll();
+
+        _settingsService = new SettingsService(Path.Combine(appRoot, "user"));
+        Settings = _settingsService.Load();
+        Shortcuts = new ShortcutMap(Settings.Shortcuts);
 
         _frameExtractor = new FrameExtractor(_ffmpeg);
         var effectPipeline = new VideoEffectPipeline(_catalog);
@@ -147,6 +154,19 @@ public class MainViewModel : ObservableObject
 
     /// <summary>Ffmpeg executable path for view-side helpers (GPU encoder probe).</summary>
     public string? FfmpegPath => _ffmpeg.FfmpegPath;
+
+    /// <summary>User preferences (user/settings.json).</summary>
+    public AppSettings Settings { get; }
+
+    /// <summary>Live keyboard map; the window turns it into input bindings.</summary>
+    public ShortcutMap Shortcuts { get; }
+
+    /// <summary>Persists Settings including the current shortcut overrides.</summary>
+    public void SaveSettings()
+    {
+        Settings.Shortcuts = Shortcuts.ToOverrides();
+        _settingsService.Save(Settings);
+    }
 
     // ---------- One-click FFmpeg install ----------
 
@@ -413,7 +433,9 @@ public class MainViewModel : ObservableObject
     public async void StartExport(
         ExportFormat format, int width, int height, double fps, int crf, bool useHardwareEncoder)
     {
-        var exportDir = Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
+        var exportDir = Settings.DefaultExportFolder is { Length: > 0 } configured
+            ? configured
+            : Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
         try { Directory.CreateDirectory(exportDir); } catch { exportDir = string.Empty; }
 
         var dialog = new SaveFileDialog
@@ -1486,6 +1508,16 @@ public class MainViewModel : ObservableObject
             oldValue, newValue, v => track.Volume = v));
     }
 
+    private void CommitTrackOpacity(Guid trackId, double oldValue, double newValue)
+    {
+        if (_projects.Current.FindTrack(trackId) is not { } track) return;
+        track.Opacity = oldValue; // clean undo baseline; the command applies the new value
+        _undoRedo.ExecuteCommand(new SetValueCommand<double>(
+            $"Set {track.Name} opacity to {newValue * 100:0}%",
+            oldValue, newValue, v => track.Opacity = v));
+        RequestPreviewRefresh();
+    }
+
     // ---------- Zoom ----------
 
     public void SetPixelsPerSecond(double value)
@@ -1506,7 +1538,7 @@ public class MainViewModel : ObservableObject
         TimelineWidth = Math.Max(1200, (duration + 30) * _pixelsPerSecond);
         OnPropertyChanged(nameof(TimelineWidth));
 
-        var callbacks = new TrackCallbacks(ToggleTrackMuted, ToggleTrackSolo, CommitTrackVolume);
+        var callbacks = new TrackCallbacks(ToggleTrackMuted, ToggleTrackSolo, CommitTrackVolume, CommitTrackOpacity);
         Tracks.Clear();
         foreach (var track in _projects.Current.Tracks)
             Tracks.Add(new TrackViewModel(

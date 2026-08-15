@@ -55,6 +55,11 @@
     overlaps; crossfades and text overlays make overlaps common now).
 19. **Split of a linked pair** — cross-link the two second halves
     (`SplitEventCommand` leaves them unlinked).
-20. **Customizable shortcuts** — Settings > Keyboard.
-21. **Dark ContextMenu style**; **IDialogService** (move MessageBox out of
-    view models); fix stale event reference in EventPropertiesWindow.
+20. **Dark ContextMenu + menu dropdown styling** (top-level menu bar is dark,
+    the popup submenus still use the light system theme); **IDialogService**
+    (move MessageBox out of view models); fix stale event reference in
+    EventPropertiesWindow.
+21. **More settings** — autosave interval, preview quality, single-key
+    shortcut suppression while a text box has focus.
+22. **Menu InputGestureText from the ShortcutMap** — menu hints are static
+    defaults today and go stale after remapping.

@@ -48,10 +48,11 @@ public partial class ExportWindow : Window
 
     public ExportWindow(
         ProjectSettings projectSettings, TimeRange? explicitRange, double projectDuration,
-        string? ffmpegPath = null)
+        string? ffmpegPath = null, bool defaultHardwareEncoder = true)
     {
         _ffmpegPath = ffmpegPath;
         InitializeComponent();
+        GpuCheck.IsChecked = defaultHardwareEncoder;
 
         FormatList.ItemsSource = Formats.Select(f => f.DisplayName()).ToList();
         FormatList.SelectedIndex = 0;

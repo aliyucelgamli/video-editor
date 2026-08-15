@@ -10,32 +10,8 @@
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display">
 
-    <!--
-      Skeleton shortcuts — these migrate into the customizable shortcut system later.
-      Single-key bindings must become focus-context aware once text inputs exist.
-    -->
-    <Window.InputBindings>
-        <KeyBinding Modifiers="Control" Key="N" Command="{Binding NewProjectCommand}"/>
-        <KeyBinding Modifiers="Control" Key="O" Command="{Binding OpenCommand}"/>
-        <KeyBinding Modifiers="Control" Key="S" Command="{Binding SaveCommand}"/>
-        <KeyBinding Modifiers="Control+Shift" Key="S" Command="{Binding SaveAsCommand}"/>
-        <KeyBinding Modifiers="Control" Key="Z" Command="{Binding UndoCommand}"/>
-        <KeyBinding Modifiers="Control" Key="Y" Command="{Binding RedoCommand}"/>
-        <KeyBinding Key="Z" Command="{Binding UndoCommand}"/>
-        <KeyBinding Key="Y" Command="{Binding RedoCommand}"/>
-        <KeyBinding Key="Delete" Command="{Binding DeleteSelectedCommand}"/>
-        <KeyBinding Key="Space" Command="{Binding PlayPauseCommand}"/>
-        <KeyBinding Key="T" Command="{Binding UnlinkSelectedCommand}"/>
-        <KeyBinding Key="S" Command="{Binding SplitAtPlayheadCommand}"/>
-        <KeyBinding Key="X" Command="{Binding SplitAtPlayheadCommand}"/>
-        <KeyBinding Key="I" Command="{Binding SetRangeStartCommand}"/>
-        <KeyBinding Key="O" Command="{Binding SetRangeEndCommand}"/>
-        <KeyBinding Modifiers="Control+Shift" Key="R" Command="{Binding ClearRangeCommand}"/>
-        <KeyBinding Key="OemPlus" Command="{Binding ZoomInCommand}"/>
-        <KeyBinding Key="OemMinus" Command="{Binding ZoomOutCommand}"/>
-        <KeyBinding Key="Add" Command="{Binding ZoomInCommand}"/>
-        <KeyBinding Key="Subtract" Command="{Binding ZoomOutCommand}"/>
-    </Window.InputBindings>
+    <!-- Keyboard shortcuts are bound at runtime from the ShortcutMap
+         (Options > Keyboard Shortcuts…) — see MainWindow.ApplyShortcuts(). -->
 
     <Window.Resources>
 
@@ -55,7 +31,8 @@
 
                         <DockPanel Grid.Row="0">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Content="M" Command="{Binding ToggleMuteCommand}" ToolTip="Mute track">
+                                <Button Content="M" Command="{Binding ToggleMuteCommand}"
+                                        ToolTip="{Binding MuteToolTip}">
                                     <Button.Style>
                                         <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
                                             <Style.Triggers>
@@ -67,7 +44,8 @@
                                         </Style>
                                     </Button.Style>
                                 </Button>
-                                <Button Content="S" Command="{Binding ToggleSoloCommand}" ToolTip="Solo track">
+                                <Button Content="S" Command="{Binding ToggleSoloCommand}" ToolTip="Solo track"
+                                        Visibility="{Binding IsAudio, Converter={StaticResource BoolToVis}}">
                                     <Button.Style>
                                         <Style TargetType="Button" BasedOn="{StaticResource TrackToggle}">
                                             <Style.Triggers>
@@ -93,8 +71,10 @@
                             </StackPanel>
                         </DockPanel>
 
-                        <!-- Track volume: 0–200%, default 100 -->
-                        <DockPanel Grid.Row="1" ToolTip="Track volume (0–200%)">
+                        <!-- Audio tracks: volume 0-200%. Visual tracks: opacity 0-100%
+                             (a volume slider means nothing on a video lane). -->
+                        <DockPanel Grid.Row="1" ToolTip="Track volume (0-200%)"
+                                   Visibility="{Binding IsAudio, Converter={StaticResource BoolToVis}}">
                             <TextBlock DockPanel.Dock="Left" Text="&#xE767;" FontFamily="Segoe MDL2 Assets"
                                        FontSize="9" Foreground="{StaticResource SubtleTextBrush}"
                                        VerticalAlignment="Center"/>
@@ -107,6 +87,21 @@
                                     PreviewMouseLeftButtonDown="TrackVolume_PreviewMouseDown"
                                     PreviewMouseLeftButtonUp="TrackVolume_PreviewMouseUp"
                                     LostMouseCapture="TrackVolume_LostMouseCapture"/>
+                        </DockPanel>
+                        <DockPanel Grid.Row="1" ToolTip="Track opacity (0-100%) — blends the whole lane over the layers below"
+                                   Visibility="{Binding IsVisual, Converter={StaticResource BoolToVis}}">
+                            <TextBlock DockPanel.Dock="Left" Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="9" Foreground="{StaticResource SubtleTextBrush}"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding OpacityLabel}" FontSize="9"
+                                       Width="30" TextAlignment="Right"
+                                       Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                            <Slider Style="{StaticResource FlatSlider}" Margin="5,0,4,0"
+                                    Minimum="0" Maximum="100"
+                                    Value="{Binding OpacityPercent, Mode=TwoWay}"
+                                    PreviewMouseLeftButtonDown="TrackOpacity_PreviewMouseDown"
+                                    PreviewMouseLeftButtonUp="TrackOpacity_PreviewMouseUp"
+                                    LostMouseCapture="TrackOpacity_LostMouseCapture"/>
                         </DockPanel>
                     </Grid>
                 </DockPanel>
@@ -324,6 +319,114 @@
 
     <DockPanel>
 
+        <!-- ======== Menu bar (logo + File/Edit/View/Insert/Tools/Options/Help) ======== -->
+        <Border DockPanel.Dock="Top"
+                Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource EdgeBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="10,4">
+            <DockPanel LastChildFill="False">
+
+                <!-- App badge: a slow, easy-on-the-eyes animated gradient -->
+                <Border x:Name="LogoBadge" DockPanel.Dock="Left" Width="26" Height="26"
+                        CornerRadius="7" VerticalAlignment="Center" ToolTip="Video Editor">
+                    <Border.Background>
+                        <LinearGradientBrush x:Name="LogoBrush" StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop x:Name="LogoStopA" Color="#FF2C5CB4" Offset="0"/>
+                            <GradientStop x:Name="LogoStopB" Color="#FF7C4DFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <Border.Triggers>
+                        <EventTrigger RoutedEvent="Border.Loaded">
+                            <BeginStoryboard>
+                                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                    <ColorAnimation Storyboard.TargetName="LogoStopA"
+                                                    Storyboard.TargetProperty="Color"
+                                                    To="#FF00A896" Duration="0:0:11"/>
+                                    <ColorAnimation Storyboard.TargetName="LogoStopB"
+                                                    Storyboard.TargetProperty="Color"
+                                                    To="#FF2C5CB4" Duration="0:0:11"/>
+                                    <PointAnimation Storyboard.TargetName="LogoBrush"
+                                                    Storyboard.TargetProperty="EndPoint"
+                                                    To="0.2,1" Duration="0:0:13"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </Border.Triggers>
+                    <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+
+                <Menu DockPanel.Dock="Left" Background="Transparent" VerticalAlignment="Center"
+                      Margin="8,0,0,0" FontSize="12">
+                    <Menu.Resources>
+                        <!-- Dropdown popups use the light system theme for now, so
+                             submenu items need dark text; top-level headers sit on
+                             the dark bar and use the app foreground. -->
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Foreground" Value="#FF1B1D22"/>
+                            <Style.Triggers>
+                                <Trigger Property="Role" Value="TopLevelHeader">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                    <Setter Property="Padding" Value="9,4"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Menu.Resources>
+
+                    <MenuItem Header="_File">
+                        <MenuItem Header="_New Project…" Command="{Binding NewProjectCommand}" InputGestureText="Ctrl+N"/>
+                        <MenuItem Header="_Open…" Command="{Binding OpenCommand}" InputGestureText="Ctrl+O"/>
+                        <Separator/>
+                        <MenuItem Header="_Save" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S"/>
+                        <MenuItem Header="Save _As…" Command="{Binding SaveAsCommand}" InputGestureText="Ctrl+Shift+S"/>
+                        <Separator/>
+                        <MenuItem Header="_Import Media…" Command="{Binding ImportMediaCommand}"/>
+                        <MenuItem Header="_Export…" Command="{Binding ExportCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="E_xit" Click="MenuExit_Click" InputGestureText="Alt+F4"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_Edit">
+                        <MenuItem Header="_Undo" Command="{Binding UndoCommand}" InputGestureText="Ctrl+Z"/>
+                        <MenuItem Header="_Redo" Command="{Binding RedoCommand}" InputGestureText="Ctrl+Y"/>
+                        <Separator/>
+                        <MenuItem Header="_Split at Playhead" Command="{Binding SplitAtPlayheadCommand}" InputGestureText="S"/>
+                        <MenuItem Header="_Delete Selected" Command="{Binding DeleteSelectedCommand}" InputGestureText="Del"/>
+                        <MenuItem Header="Un_link Audio/Video" Command="{Binding UnlinkSelectedCommand}" InputGestureText="T"/>
+                        <Separator/>
+                        <MenuItem Header="_Clear Export Range" Command="{Binding ClearRangeCommand}" InputGestureText="Ctrl+Shift+R"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_View">
+                        <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="+"/>
+                        <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="-"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_Insert">
+                        <MenuItem Header="_Text…" Command="{Binding AddTextCommand}"/>
+                        <MenuItem Header="_Media Files…" Command="{Binding ImportMediaCommand}"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_Tools">
+                        <MenuItem Header="Download _FFmpeg" Command="{Binding DownloadFfmpegCommand}"/>
+                        <MenuItem Header="Open E_xports Folder" Click="MenuOpenExports_Click"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_Options">
+                        <MenuItem Header="_Settings…" Click="MenuSettings_Click"/>
+                        <MenuItem Header="_Keyboard Shortcuts…" Click="MenuShortcuts_Click"/>
+                    </MenuItem>
+
+                    <MenuItem Header="_Help">
+                        <MenuItem Header="Open _Logs Folder" Click="MenuOpenLogs_Click"/>
+                        <Separator/>
+                        <MenuItem Header="_About Video Editor" Click="MenuAbout_Click"/>
+                    </MenuItem>
+                </Menu>
+            </DockPanel>
+        </Border>
+
         <!-- ======== Toolbar ======== -->
         <Border DockPanel.Dock="Top"
                 Background="{StaticResource PanelBrush}"
@@ -355,64 +458,35 @@
 
                 <StackPanel Orientation="Horizontal">
 
-                <Border Width="26" Height="26" CornerRadius="7"
-                        Background="{StaticResource BrandBrush}" VerticalAlignment="Center">
-                    <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="13"
-                               Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <TextBlock Text="Video Editor" FontWeight="SemiBold" FontSize="13"
-                           Foreground="{StaticResource TextBrush}"
-                           VerticalAlignment="Center" Margin="9,0,4,0"/>
-
-                <Border Style="{StaticResource ToolbarSeparator}"/>
-
                 <Button Style="{StaticResource ToolButton}" Command="{Binding NewProjectCommand}"
                         ToolTip="New Project (Ctrl+N)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7C3;"/>
-                        <TextBlock Text="New" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7C3;"/>
                 </Button>
                 <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}"
                         ToolTip="Open Project (Ctrl+O)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8E5;"/>
-                        <TextBlock Text="Open" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8E5;"/>
                 </Button>
                 <Button Style="{StaticResource ToolButton}" Command="{Binding SaveCommand}"
                         ToolTip="Save Project (Ctrl+S)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74E;"/>
-                        <TextBlock Text="Save" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74E;"/>
                 </Button>
 
                 <Border Style="{StaticResource ToolbarSeparator}"/>
 
                 <Button Style="{StaticResource ToolButton}" Command="{Binding ImportMediaCommand}"
                         ToolTip="Import media files (or drop them anywhere in the library)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
-                        <TextBlock Text="Import" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
                 </Button>
 
                 <Border Style="{StaticResource ToolbarSeparator}"/>
 
                 <Button Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}"
                         ToolTip="{Binding UndoToolTip}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A7;"/>
-                        <TextBlock Text="Undo" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A7;"/>
                 </Button>
                 <Button Style="{StaticResource ToolButton}" Command="{Binding RedoCommand}"
                         ToolTip="{Binding RedoToolTip}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A6;"/>
-                        <TextBlock Text="Redo" Margin="6,0,0,0"/>
-                    </StackPanel>
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A6;"/>
                 </Button>
 
                 </StackPanel>

@@ -1,0 +1,48 @@
+<Window x:Class="VideoEditor.App.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Width="440" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+
+    <StackPanel Margin="14,12">
+
+        <TextBlock Text="EXPORT" Style="{StaticResource PanelHeader}"/>
+
+        <TextBlock Text="Default export folder" FontSize="11" Margin="0,8,0,3"
+                   Foreground="{StaticResource SubtleTextBrush}"/>
+        <DockPanel>
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="10,5"
+                    Margin="6,0,0,0" Content="Browse…" Click="Browse_Click"/>
+            <TextBox x:Name="ExportFolderBox" Style="{StaticResource FlatTextBox}"
+                     ToolTip="Leave empty to use user\exports next to the app"/>
+        </DockPanel>
+
+        <CheckBox x:Name="GpuDefaultCheck" Style="{StaticResource FlatCheckBox}" Margin="0,12,0,0"
+                  Content="Prefer the hardware (GPU) encoder by default"
+                  ToolTip="Initial state of the export dialog's checkbox — each export can still change it"/>
+
+        <TextBlock Text="KEYBOARD" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
+        <Button Style="{StaticResource ToolButton}" Padding="12,6" Margin="0,8,0,0"
+                HorizontalAlignment="Left" Click="OpenShortcuts_Click">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE765;"/>
+                <TextBlock Text="Keyboard Shortcuts…" Margin="6,0,0,0"/>
+            </StackPanel>
+        </Button>
+
+        <DockPanel Margin="0,16,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                    Background="#FF1F3321" Padding="18,8" Click="Ok_Click">
+                <TextBlock Text="OK" FontWeight="SemiBold" Foreground="#FF9BE28F"/>
+            </Button>
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="14,8"
+                    Margin="0,0,8,0" Content="Cancel" Click="Cancel_Click"/>
+        </DockPanel>
+    </StackPanel>
+</Window>

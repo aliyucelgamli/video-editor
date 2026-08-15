@@ -10,7 +10,8 @@ namespace VideoEditor.App.ViewModels;
 public record TrackCallbacks(
     Action<Guid> ToggleMute,
     Action<Guid> ToggleSolo,
-    Action<Guid, double, double> CommitVolume);
+    Action<Guid, double, double> CommitVolume,
+    Action<Guid, double, double> CommitOpacity);
 
 /// <summary>Visual projection of a track and its events.</summary>
 public class TrackViewModel : ObservableObject
@@ -30,6 +31,8 @@ public class TrackViewModel : ObservableObject
     private readonly TrackCallbacks _callbacks;
     private double _volumeEditStart;
     private bool _isEditingVolume;
+    private double _opacityEditStart;
+    private bool _isEditingOpacity;
 
     public TrackViewModel(
         Track track,
@@ -68,6 +71,11 @@ public class TrackViewModel : ObservableObject
 
     public Guid Id { get; }
     public TrackType Type { get; }
+
+    /// <summary>Audio tracks get volume + solo; visual tracks get opacity instead.</summary>
+    public bool IsAudio => Type == TrackType.Audio;
+    public bool IsVisual => Type != TrackType.Audio;
+    public string MuteToolTip => IsAudio ? "Mute track" : "Hide track";
     public string Name { get; }
     public string TypeLabel { get; }
     public string TypeGlyph { get; }
@@ -109,6 +117,38 @@ public class TrackViewModel : ObservableObject
         _isEditingVolume = false;
         if (Math.Abs(_volumeEditStart - _track.Volume) > 0.0001)
             _callbacks.CommitVolume(_track.Id, _volumeEditStart, _track.Volume);
+    }
+
+    // ---------- Opacity (visual tracks, 0-100%; rendered by the compositor) ----------
+
+    public double OpacityPercent
+    {
+        get => Math.Round(Math.Clamp(_track.Opacity, 0, 1) * 100);
+        set
+        {
+            var clamped = Math.Clamp(value / 100.0, 0, 1);
+            if (Math.Abs(_track.Opacity - clamped) < 0.0001) return;
+            _track.Opacity = clamped; // live while dragging; committed on release
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(OpacityLabel));
+        }
+    }
+
+    public string OpacityLabel => $"{OpacityPercent:0}%";
+
+    public void BeginOpacityEdit()
+    {
+        if (_isEditingOpacity) return;
+        _isEditingOpacity = true;
+        _opacityEditStart = _track.Opacity;
+    }
+
+    public void EndOpacityEdit()
+    {
+        if (!_isEditingOpacity) return;
+        _isEditingOpacity = false;
+        if (Math.Abs(_opacityEditStart - _track.Opacity) > 0.0001)
+            _callbacks.CommitOpacity(_track.Id, _opacityEditStart, _track.Opacity);
     }
 
     private static Brush Solid(Color color)

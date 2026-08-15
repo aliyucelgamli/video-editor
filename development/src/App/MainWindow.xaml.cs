@@ -1,11 +1,14 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using VideoEditor.App.Ui;
 using VideoEditor.App.ViewModels;
+using VideoEditor.Application.Actions;
 using VideoEditor.Domain;
+using VideoEditor.MediaEngine;
 
 namespace VideoEditor.App;
 
@@ -59,6 +62,80 @@ public partial class MainWindow : Window
             _ = Dispatcher.InvokeAsync(() =>
                 new ExportProgressWindow(session) { Owner = this }.ShowDialog());
         };
+
+        ApplyShortcuts();
+    }
+
+    // ---------- Keyboard shortcuts (bound at runtime from the ShortcutMap) ----------
+
+    /// <summary>Action registry ids → the view model commands they trigger.</summary>
+    private Dictionary<string, ICommand> ActionCommands() => new()
+    {
+        ["file.new"] = _viewModel.NewProjectCommand,
+        ["file.open"] = _viewModel.OpenCommand,
+        ["file.save"] = _viewModel.SaveCommand,
+        ["file.saveAs"] = _viewModel.SaveAsCommand,
+        ["file.import"] = _viewModel.ImportMediaCommand,
+        ["file.export"] = _viewModel.ExportCommand,
+        ["edit.undo"] = _viewModel.UndoCommand,
+        ["edit.redo"] = _viewModel.RedoCommand,
+        ["edit.delete"] = _viewModel.DeleteSelectedCommand,
+        ["edit.split"] = _viewModel.SplitAtPlayheadCommand,
+        ["edit.unlink"] = _viewModel.UnlinkSelectedCommand,
+        ["edit.addText"] = _viewModel.AddTextCommand,
+        ["playback.toggle"] = _viewModel.PlayPauseCommand,
+        ["timeline.rangeStart"] = _viewModel.SetRangeStartCommand,
+        ["timeline.rangeEnd"] = _viewModel.SetRangeEndCommand,
+        ["timeline.clearRange"] = _viewModel.ClearRangeCommand,
+        ["view.zoomIn"] = _viewModel.ZoomInCommand,
+        ["view.zoomOut"] = _viewModel.ZoomOutCommand
+    };
+
+    /// <summary>Rebuilds the window's key bindings from the live shortcut map.</summary>
+    private void ApplyShortcuts()
+    {
+        var commands = ActionCommands();
+        InputBindings.Clear();
+        foreach (var action in EditorActions.All)
+        {
+            if (!commands.TryGetValue(action.Id, out var command)) continue;
+            foreach (var gesture in _viewModel.Shortcuts.GesturesFor(action))
+            {
+                if (!KeyGestureText.TryParse(gesture, out var modifiers, out var key)) continue;
+                try
+                {
+                    // Property initialization, not the (command, key, modifiers)
+                    // constructor: that one validates the gesture and rejects
+                    // modifier-less letters, which the timeline relies on
+                    // (S, T, I, O…). This is the path XAML KeyBindings take.
+                    InputBindings.Add(new KeyBinding
+                    {
+                        Command = command,
+                        Key = key,
+                        Modifiers = modifiers
+                    });
+                }
+                catch
+                {
+                    // A single unusable gesture must never stop the app from starting.
+                }
+            }
+        }
+    }
+
+    private void MenuShortcuts_Click(object sender, RoutedEventArgs e) => OpenShortcutsWindow();
+
+    private void OpenShortcutsWindow() =>
+        new ShortcutsWindow(_viewModel.Shortcuts, onChanged: () =>
+        {
+            _viewModel.SaveSettings();
+            ApplyShortcuts();
+        }) { Owner = this }.ShowDialog();
+
+    private void MenuSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsWindow(_viewModel.Settings, OpenShortcutsWindow) { Owner = this };
+        if (dialog.ShowDialog() == true) _viewModel.SaveSettings();
     }
 
     /// <summary>File → New: resolution/fps dialog, then a fresh project.</summary>
@@ -76,7 +153,8 @@ public partial class MainWindow : Window
     {
         var project = _viewModel.CurrentProject;
         var dialog = new ExportWindow(
-            project.Settings, project.ExportRange, project.Duration, _viewModel.FfmpegPath)
+            project.Settings, project.ExportRange, project.Duration, _viewModel.FfmpegPath,
+            _viewModel.Settings.UseHardwareEncoderByDefault)
         {
             Owner = this
         };
@@ -100,6 +178,39 @@ public partial class MainWindow : Window
         var dialog = new TextEventWindow(style) { Owner = this };
         if (dialog.ShowDialog() != true) return;
         _viewModel.EditTextEvent(eventId, dialog.TextStyle);
+    }
+
+    // ---------- Menu bar ----------
+
+    private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void MenuOpenExports_Click(object sender, RoutedEventArgs e) =>
+        OpenFolderInExplorer(System.IO.Path.Combine(CachePaths.LocateAppRoot(), "user", "exports"));
+
+    private void MenuOpenLogs_Click(object sender, RoutedEventArgs e) =>
+        OpenFolderInExplorer(System.IO.Path.Combine(Environment.CurrentDirectory, "logs"));
+
+    private static void OpenFolderInExplorer(string folder)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch
+        {
+            // Opening a folder is a convenience — never let it crash the app.
+        }
+    }
+
+    private void MenuAbout_Click(object sender, RoutedEventArgs e)
+    {
+        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "dev";
+        MessageBox.Show(
+            $"Video Editor {version}\n\n" +
+            "A non-destructive video/audio editor built on .NET and FFmpeg.\n" +
+            "Docs: README.md · CLAUDE.md · TODO.md in the project folder.",
+            "About Video Editor", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>
@@ -838,6 +949,15 @@ public partial class MainWindow : Window
 
     private void TrackVolume_LostMouseCapture(object sender, MouseEventArgs e) =>
         (SliderContext<TrackViewModel>(sender))?.EndVolumeEdit();
+
+    private void TrackOpacity_PreviewMouseDown(object sender, MouseButtonEventArgs e) =>
+        (SliderContext<TrackViewModel>(sender))?.BeginOpacityEdit();
+
+    private void TrackOpacity_PreviewMouseUp(object sender, MouseButtonEventArgs e) =>
+        (SliderContext<TrackViewModel>(sender))?.EndOpacityEdit();
+
+    private void TrackOpacity_LostMouseCapture(object sender, MouseEventArgs e) =>
+        (SliderContext<TrackViewModel>(sender))?.EndOpacityEdit();
 
     private void SelectedVolume_PreviewMouseDown(object sender, MouseButtonEventArgs e) =>
         _viewModel.BeginSelectedVolumeEdit();
