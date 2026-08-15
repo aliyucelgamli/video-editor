@@ -400,6 +400,8 @@
                     </MenuItem>
 
                     <MenuItem Header="_View">
+                        <MenuItem Header="_Layers…" Command="{Binding ShowLayersCommand}"/>
+                        <Separator/>
                         <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="+"/>
                         <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="-"/>
                     </MenuItem>
@@ -788,7 +790,7 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </Button.Style>
-                                        <TextBlock Text="&#xE8EE;" Style="{StaticResource ButtonIcon}">
+                                        <TextBlock Text="&#xE8EE;">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock" BasedOn="{StaticResource ButtonIcon}">
                                                     <Style.Triggers>

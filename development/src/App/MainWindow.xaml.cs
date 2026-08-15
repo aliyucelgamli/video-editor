@@ -58,6 +58,7 @@ public partial class MainWindow : Window
         _viewModel.NewProjectRequested += (_, _) => ShowNewProjectDialog();
         _viewModel.ExportRequested += (_, _) => ShowExportDialog();
         _viewModel.AddTextRequested += (_, _) => ShowAddTextDialog();
+        _viewModel.LayersRequested += (_, _) => _layersWindow.Show(this, () => new LayersWindow(_viewModel));
         _viewModel.ExportSessionStarted += (_, session) =>
         {
             // Deferred: ShowDialog pumps messages until the window closes, so
@@ -688,6 +689,7 @@ public partial class MainWindow : Window
 
     // ---------- size + "…" buttons (transform editor / Clip Properties) ----------
 
+    private readonly ChildWindowSlot<LayersWindow> _layersWindow = new();
     private readonly ChildWindowSlot<EventPropertiesWindow> _propertiesWindow = new();
     private readonly ChildWindowSlot<TransformEditorWindow> _transformWindow = new();
 
@@ -852,6 +854,19 @@ public partial class MainWindow : Window
                 var transform = new MenuItem { Header = "Size && Position…" };
                 transform.Click += (_, _) => OpenTransformEditor(evt.Id);
                 menu.Items.Add(transform);
+
+                var layer = new MenuItem { Header = "Layer" };
+                var forward = new MenuItem { Header = "Bring Forward" };
+                forward.Click += (_, _) => _viewModel.NudgeEventLayer(evt.Id, +1);
+                var backward = new MenuItem { Header = "Send Backward" };
+                backward.Click += (_, _) => _viewModel.NudgeEventLayer(evt.Id, -1);
+                var allLayers = new MenuItem { Header = "All Layers…" };
+                allLayers.Click += (_, _) => _viewModel.ShowLayersCommand.Execute(null);
+                layer.Items.Add(forward);
+                layer.Items.Add(backward);
+                layer.Items.Add(new Separator());
+                layer.Items.Add(allLayers);
+                menu.Items.Add(layer);
             }
 
             if (_viewModel.GetEventFadeInfo(evt.Id) is { } fade)

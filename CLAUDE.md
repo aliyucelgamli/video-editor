@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 18)
+## Feature state (2026-08-16, round 19)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -161,7 +161,15 @@ clears it; play covers the selection and the loop toggle next to play/stop repea
 export; clears on apply or selection change); **app-styled dialogs** (`App/Ui/DialogOptions`
 + `IDialogService`/`DialogService` + `DialogWindow`: caller-defined buttons, tones and
 details — every MessageBox in the app is gone); **"warn on exit" setting** (off by default;
-New/Open still always ask); run.bat build-first flow. 74 tests green.
+New/Open still always ask); **layer (z-order) system** — every clip has a `Layer`
+(defaults: video 0, images 1, text 2) and every track a `Layer` added to its clips;
+`FrameCompositor.EnumerateVisibleLayers` paints back to front by effective layer, ties
+broken by lane order (top lane = bottom of the stack), shared by preview and export;
+Layers window (View > Layers…) lists clips top-first with bring-forward / send-backward
+and typed layer numbers plus per-track layers; clip right-click has a Layer submenu.
+This also fixed titles rendering *behind* the footage. Preview renders are debounced in
+one place, so scrubbing no longer spawns an ffmpeg process per mouse move.
+run.bat build-first flow. 76 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;
@@ -190,7 +198,9 @@ Based on the Microsoft C# coding conventions, adapted to this codebase:
   `InitializeComponent` (fields still null); a using-imported class name can collide with an
   `x:Name` element; a window property can hide a `FrameworkElement` member (CS0108);
   `new KeyBinding(command, key, modifiers)` validates the gesture and throws on
-  modifier-less letters \u2014 build key bindings with property initializers instead.
+  modifier-less letters \u2014 build key bindings with property initializers instead;
+  an element may not carry both a `Style="..."` attribute and a `<Tag.Style>` block
+  (MC3024) \u2014 put `BasedOn` on the block instead.
 - Warnings are errors in spirit: the build must be warning-clean. Un-awaited calls that
   are intentionally fire-and-forget use `_ =` discards with a short comment.
 

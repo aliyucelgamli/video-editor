@@ -39,39 +39,33 @@ public class FrameCompositor
         var canvas = new byte[width * height * 4];
         FillBlack(canvas);
 
-        // Track index 0 is the top lane in the UI → paint it last (on top).
-        foreach (var track in EnumerateVisualTracksBottomUp(project))
+        // Back to front: the lowest effective layer is painted first.
+        foreach (var (track, evt) in EnumerateVisibleLayers(project, time))
         {
-            if (track.Muted) continue;
+            cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var evt in track.Events)
+            byte[] layer;
+            if (evt.Text is { } textStyle)
             {
-                if (!evt.Contains(time)) continue;
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[] layer;
-                if (evt.Text is { } textStyle)
-                {
-                    // Rasterized by the UI; a private copy because effects mutate.
-                    var raster = TextRasters.TryGetShared(textStyle, width, height);
-                    if (raster is null) continue;
-                    layer = (byte[])raster.Bgra.Clone();
-                }
-                else
-                {
-                    var media = project.Media.FindById(evt.MediaId);
-                    if (media is null || media.Type == MediaType.Audio) continue;
-
-                    var sourceTime = evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
-                    var frame = await _extractor
-                        .GetFrameAsync(media.FilePath, media.Type == MediaType.Image ? 0 : sourceTime, width, height, cancellationToken)
-                        .ConfigureAwait(false);
-                    if (frame is null) continue;
-                    layer = frame.Bgra;
-                }
-
-                BlendLayerOnto(canvas, layer, width, height, track, evt, time, project, preview);
+                // Rasterized by the UI; a private copy because effects mutate.
+                var raster = TextRasters.TryGetShared(textStyle, width, height);
+                if (raster is null) continue;
+                layer = (byte[])raster.Bgra.Clone();
             }
+            else
+            {
+                var media = project.Media.FindById(evt.MediaId);
+                if (media is null || media.Type == MediaType.Audio) continue;
+
+                var sourceTime = evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
+                var frame = await _extractor
+                    .GetFrameAsync(media.FilePath, media.Type == MediaType.Image ? 0 : sourceTime, width, height, cancellationToken)
+                    .ConfigureAwait(false);
+                if (frame is null) continue;
+                layer = frame.Bgra;
+            }
+
+            BlendLayerOnto(canvas, layer, width, height, track, evt, time, project, preview);
         }
 
         return new RawFrame(canvas, width, height);
@@ -114,18 +108,13 @@ public class FrameCompositor
     public static VisualLayer? FindSingleVisualLayer(Project project, double time)
     {
         VisualLayer? found = null;
-        foreach (var track in EnumerateVisualTracksBottomUp(project))
+        foreach (var (track, evt) in EnumerateVisibleLayers(project, time))
         {
-            if (track.Muted) continue;
-            foreach (var evt in track.Events)
-            {
-                if (!evt.Contains(time)) continue;
-                if (evt.Text != null) return null; // text always composites
-                var media = project.Media.FindById(evt.MediaId);
-                if (media is null || media.Type == MediaType.Audio) continue;
-                if (found != null) return null; // more than one layer → composite path
-                found = new VisualLayer(track, evt, media);
-            }
+            if (evt.Text != null) return null; // text always composites
+            var media = project.Media.FindById(evt.MediaId);
+            if (media is null || media.Type == MediaType.Audio) continue;
+            if (found != null) return null; // more than one layer → composite path
+            found = new VisualLayer(track, evt, media);
         }
         return found;
     }
@@ -247,16 +236,42 @@ public class FrameCompositor
         return FadeFactor(evt, time, fadeIn, fadeOut);
     }
 
-    /// <summary>Visual tracks in paint order (bottom lane first, top lane last).</summary>
-    public static IEnumerable<Track> EnumerateVisualTracksBottomUp(Project project)
+    /// <summary>One visual clip to paint, already in back-to-front order.</summary>
+    public readonly record struct LayerEntry(Track Track, TimelineEvent Event);
+
+    /// <summary>
+    /// Every visual clip visible at <paramref name="time"/>, ordered back to
+    /// front: by effective layer (track layer + clip layer), then by track
+    /// position — the top lane in the UI sits at the bottom of the stack, so
+    /// the default V1 / A1 / T1 layout puts titles above the footage.
+    /// </summary>
+    public static List<LayerEntry> EnumerateVisibleLayers(Project project, double time)
     {
-        for (var i = project.Tracks.Count - 1; i >= 0; i--)
+        var entries = new List<(LayerEntry Entry, int Layer, int TrackIndex, double Start)>();
+        for (var i = 0; i < project.Tracks.Count; i++)
         {
             var track = project.Tracks[i];
-            if (track.Type is TrackType.Video or TrackType.Overlay)
-                yield return track;
+            if (track.Type is not (TrackType.Video or TrackType.Overlay)) continue;
+            if (track.Muted) continue;
+
+            foreach (var evt in track.Events)
+            {
+                if (!evt.Contains(time)) continue;
+                entries.Add((new LayerEntry(track, evt), Layers.Effective(track, evt), i, evt.Start));
+            }
         }
+
+        return entries
+            .OrderBy(e => e.Layer)
+            .ThenBy(e => e.TrackIndex)
+            .ThenBy(e => e.Start)
+            .Select(e => e.Entry)
+            .ToList();
     }
+
+    /// <summary>Visual tracks in lane order (top lane first).</summary>
+    public static IEnumerable<Track> EnumerateVisualTracks(Project project) =>
+        project.Tracks.Where(t => t.Type is TrackType.Video or TrackType.Overlay);
 
     /// <summary>Resets a canvas to opaque black.</summary>
     public static void FillBlack(byte[] canvas)

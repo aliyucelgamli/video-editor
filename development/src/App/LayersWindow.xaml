@@ -1,0 +1,97 @@
+<Window x:Class="VideoEditor.App.LayersWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Layers"
+        Width="470" Height="600" MinWidth="380" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+
+    <DockPanel Margin="14,12">
+
+        <DockPanel DockPanel.Dock="Bottom" LastChildFill="False" Margin="0,10,0,0">
+            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="18,7"
+                    Content="Close" Click="Close_Click"/>
+        </DockPanel>
+
+        <TextBlock DockPanel.Dock="Top" FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
+                   Foreground="{StaticResource SubtleTextBrush}"
+                   Text="Higher layers render on top, in the preview and in the export. Defaults: video 0, images 1, text 2. A track's layer is added to its clips."/>
+
+        <!-- Track layers -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <TextBlock Text="TRACKS" Style="{StaticResource PanelHeader}" Margin="0,0,0,4"/>
+            <ItemsControl x:Name="TrackList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel Margin="0,2">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button Content="&#xE96E;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                        Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                        Tag="{Binding Id}" Click="TrackDown_Click" ToolTip="Send this track down"/>
+                                <Button Content="&#xE96D;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                        Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                        Tag="{Binding Id}" Click="TrackUp_Click" ToolTip="Bring this track up"/>
+                                <TextBlock Text="{Binding Layer}" Width="30" TextAlignment="Center"
+                                           VerticalAlignment="Center" Foreground="{StaticResource TextBrush}"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                       Foreground="{StaticResource SubtleTextBrush}"/>
+                        </DockPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+
+        <!-- Clip stack, top of the stack first -->
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="CLIPS (TOP OF THE STACK FIRST)"
+                       Style="{StaticResource PanelHeader}" Margin="0,0,0,4"/>
+            <ListBox x:Name="ClipList" Background="Transparent" BorderThickness="0"
+                     ItemContainerStyle="{StaticResource MediaItemContainer}"
+                     SelectionChanged="ClipList_SelectionChanged">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <Button Content="&#xE96E;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                        Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                        Tag="{Binding EventId}" Click="ClipDown_Click"
+                                        ToolTip="Send backward (one layer down)"/>
+                                <Button Content="&#xE96D;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                        Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                        Tag="{Binding EventId}" Click="ClipUp_Click"
+                                        ToolTip="Bring forward (one layer up)"/>
+                                <TextBox Width="46" Margin="6,0,0,0" Text="{Binding Layer, Mode=OneWay}"
+                                         Style="{StaticResource FlatTextBox}" Tag="{Binding EventId}"
+                                         KeyDown="LayerBox_KeyDown" LostFocus="LayerBox_LostFocus"
+                                         ToolTip="Type a layer number and press Enter"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
+                                               FontSize="10" VerticalAlignment="Center"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                    <TextBlock Text="{Binding Name}" Margin="6,0,0,0"
+                                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                               Foreground="{StaticResource TextBrush}"/>
+                                </StackPanel>
+                                <TextBlock FontSize="10" Margin="0,2,0,0"
+                                           Foreground="{StaticResource SubtleTextBrush}">
+                                    <Run Text="{Binding TrackName, Mode=OneWay}"/>
+                                    <Run Text="  •  "/>
+                                    <Run Text="{Binding TimeLabel, Mode=OneWay}"/>
+                                    <Run Text="  •  layer "/>
+                                    <Run Text="{Binding LayerLabel, Mode=OneWay}"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+    </DockPanel>
+</Window>

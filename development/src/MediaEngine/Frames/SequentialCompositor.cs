@@ -37,32 +37,26 @@ public sealed class SequentialCompositor : IDisposable
     {
         FrameCompositor.FillBlack(canvas);
 
-        foreach (var track in FrameCompositor.EnumerateVisualTracksBottomUp(project))
+        foreach (var (track, evt) in FrameCompositor.EnumerateVisibleLayers(project, time))
         {
-            if (track.Muted) continue;
+            cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var evt in track.Events)
+            byte[]? layer;
+            if (evt.Text is { } textStyle)
             {
-                if (!evt.Contains(time)) continue;
-                cancellationToken.ThrowIfCancellationRequested();
-
-                byte[]? layer;
-                if (evt.Text is { } textStyle)
-                {
-                    layer = AcquireTextLayer(textStyle, width, height);
-                }
-                else
-                {
-                    var media = project.Media.FindById(evt.MediaId);
-                    if (media is null || media.Type == MediaType.Audio) continue;
-                    layer = await AcquireLayerAsync(
-                            evt, media, time, frameIndex, fps, width, height, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                if (layer is null) continue;
-
-                _compositor.BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
+                layer = AcquireTextLayer(textStyle, width, height);
             }
+            else
+            {
+                var media = project.Media.FindById(evt.MediaId);
+                if (media is null || media.Type == MediaType.Audio) continue;
+                layer = await AcquireLayerAsync(
+                        evt, media, time, frameIndex, fps, width, height, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            if (layer is null) continue;
+
+            _compositor.BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
         }
 
         ReleaseFinishedSources(time);

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
@@ -54,9 +55,15 @@ public class PreviewViewModel : ObservableObject
         PlayPauseCommand = new RelayCommand(TogglePlay);
         StopCommand = new RelayCommand(Stop);
         ToggleLoopCommand = new RelayCommand(() => IsLooping = !IsLooping);
+
+        // Short enough to feel instant on a single click, long enough that a
+        // scrub drag collapses into one decode.
+        _renderDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(45) };
+        _renderDebounce.Tick += (_, _) => { _renderDebounce.Stop(); RenderNow(); };
     }
 
     private readonly Func<EffectPreview?>? _effectPreview;
+    private readonly DispatcherTimer _renderDebounce;
 
     public RelayCommand PlayPauseCommand { get; }
     public RelayCommand StopCommand { get; }
@@ -107,10 +114,22 @@ public class PreviewViewModel : ObservableObject
         if (render && !IsPlaying) RequestRender();
     }
 
-    /// <summary>Re-renders the current frame (after edits, effect changes…).</summary>
+    /// <summary>
+    /// Re-renders the current frame (after edits, effect changes…). Requests
+    /// are coalesced: dragging the playhead fires dozens of these per second
+    /// and every render spawns an ffmpeg process, so only the last one in a
+    /// short window actually decodes — that is what keeps scrubbing smooth.
+    /// </summary>
     public void RequestRender()
     {
         if (IsPlaying) return; // the play loop owns the screen
+        _renderDebounce.Stop();
+        _renderDebounce.Start();
+    }
+
+    private void RenderNow()
+    {
+        if (IsPlaying) return;
 
         var project = _getProject();
         var (width, height) = PreviewSize(project);

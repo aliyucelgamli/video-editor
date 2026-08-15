@@ -45,6 +45,13 @@ public class TimelineEvent
     /// <summary>Set for generated text (title) events; null for media events.</summary>
     public TextStyle? Text { get; set; }
 
+    /// <summary>
+    /// Compositing order: higher layers render on top of lower ones, whatever
+    /// track they sit on. Defaults come from <see cref="Layers"/> (video 0,
+    /// images 1, text 2) and can be changed per clip.
+    /// </summary>
+    public int Layer { get; set; }
+
     public Transform2D Transform { get; set; } = new();
     public List<EffectInstance> Effects { get; set; } = new();
     public List<KeyframeTrack> Keyframes { get; set; } = new();

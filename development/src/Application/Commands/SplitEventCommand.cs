@@ -60,6 +60,8 @@ public class SplitEventCommand : IEditorCommand
             FadeInEasing = _first.FadeInEasing,
             Volume = _first.Volume,
             Opacity = _first.Opacity,
+            Layer = _first.Layer,
+            Text = _first.Text?.Clone(),
             Muted = _first.Muted,
             Transform = _first.Transform.Clone(),
             // Effect/keyframe copying and linked-event handling arrive in a later step.

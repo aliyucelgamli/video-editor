@@ -30,6 +30,9 @@
    offer on start; missing-media Locate/Relink dialog.
 9. **Text polish** — alignment presets (lower third, corners), per-line
    styling, background box behind text.
+9b. **Layers window: drag to reorder** — today it has bring-forward /
+    send-backward buttons and typed numbers; hold-drag reordering would be
+    faster for long stacks.
 
 ## P2 — Professional polish
 

@@ -8,6 +8,9 @@ public class Track
     public TrackType Type { get; set; }
     public List<TimelineEvent> Events { get; set; } = new();
 
+    /// <summary>Added to every clip's layer — lifts or drops a whole lane.</summary>
+    public int Layer { get; set; }
+
     public double Volume { get; set; } = 1.0;
     public double Opacity { get; set; } = 1.0;
     public bool Muted { get; set; }

@@ -55,7 +55,6 @@ public class MainViewModel : ObservableObject
     private readonly MediaEnrichmentService _enrichment;
     private readonly TimelineVisualsService _visuals;
     private readonly ExportService _exporter;
-    private readonly DispatcherTimer _previewRefreshTimer;
 
     private string _statusText = "Ready — drop media files into the library or a track";
     private double _pixelsPerSecond = 20.0;
@@ -117,11 +116,6 @@ public class MainViewModel : ObservableObject
             setStatus: s => StatusText = s,
             previewRefresh: RequestPreviewRefresh);
 
-        // Short debounce: with the extractor's frame cache, re-rendering the same
-        // playhead position only re-runs effects, so sliders respond almost live.
-        _previewRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
-        _previewRefreshTimer.Tick += (_, _) => { _previewRefreshTimer.Stop(); Preview.RequestRender(); };
-
         NewProjectCommand = new RelayCommand(NewProject);
         OpenCommand = new RelayCommand(Open);
         SaveCommand = new RelayCommand(Save);
@@ -137,6 +131,7 @@ public class MainViewModel : ObservableObject
         SetRangeEndCommand = new RelayCommand(() => SetRangeEdge(isStart: false));
         SplitAtPlayheadCommand = new RelayCommand(SplitAtPlayhead);
         AddTextCommand = new RelayCommand(() => AddTextRequested?.Invoke(this, EventArgs.Empty));
+        ShowLayersCommand = new RelayCommand(() => LayersRequested?.Invoke(this, EventArgs.Empty));
         ClearRangeCommand = new RelayCommand(ClearRange, () => HasExplicitRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
@@ -293,12 +288,12 @@ public class MainViewModel : ObservableObject
     /// <summary>Moves the playhead (timeline click / ruler scrub) and renders that frame.</summary>
     public void SeekTo(double time) => Preview.Seek(Math.Max(0, time));
 
-    /// <summary>Debounced preview re-render (slider drags, effect edits…).</summary>
-    public void RequestPreviewRefresh()
-    {
-        _previewRefreshTimer.Stop();
-        _previewRefreshTimer.Start();
-    }
+    /// <summary>
+    /// Preview re-render (slider drags, effect edits, layer changes…).
+    /// PreviewViewModel coalesces the requests, so calling this on every
+    /// mouse move is cheap.
+    /// </summary>
+    public void RequestPreviewRefresh() => Preview.RequestRender();
 
     /// <summary>
     /// Drag-selection on an empty lane: sets the yellow range live (no undo
@@ -919,7 +914,8 @@ public class MainViewModel : ObservableObject
             Start = Math.Max(0, Math.Round(start, 2)),
             Duration = duration,
             SourceIn = 0,
-            SourceOut = duration
+            SourceOut = duration,
+            Layer = Layers.DefaultFor(media.Type)
         };
     }
 
@@ -1247,6 +1243,69 @@ public class MainViewModel : ObservableObject
         return targets;
     }
 
+    // ---------- Layers (compositing order) ----------
+
+    /// <summary>Raised when the Layers window should open (handled by the window).</summary>
+    public event EventHandler? LayersRequested;
+
+    public RelayCommand ShowLayersCommand { get; private set; } = null!;
+
+    /// <summary>Sets a clip's layer (undoable, re-renders the preview).</summary>
+    public void SetEventLayer(Guid eventId, int layer)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        var evt = found.Event;
+        layer = Layers.Clamp(layer);
+        if (evt.Layer == layer) return;
+
+        RunCommand(new SetValueCommand<int>(
+            $"Set layer of '{evt.Name}'", evt.Layer, layer, v => evt.Layer = v));
+        RequestPreviewRefresh();
+        StatusText = $"'{evt.Name}' is now on layer {layer}";
+    }
+
+    /// <summary>Moves a clip one step up or down the stack.</summary>
+    public void NudgeEventLayer(Guid eventId, int delta)
+    {
+        if (_projects.Current.FindEvent(eventId) is { } found)
+            SetEventLayer(eventId, found.Event.Layer + delta);
+    }
+
+    public void SetTrackLayer(Guid trackId, int layer)
+    {
+        if (_projects.Current.FindTrack(trackId) is not { } track) return;
+        layer = Layers.Clamp(layer);
+        if (track.Layer == layer) return;
+
+        RunCommand(new SetValueCommand<int>(
+            $"Set layer of '{track.Name}'", track.Layer, layer, v => track.Layer = v));
+        RequestPreviewRefresh();
+    }
+
+    /// <summary>Visual clips with their effective layer, top of the stack first.</summary>
+    public IReadOnlyList<LayerItemViewModel> BuildLayerItems()
+    {
+        var items = new List<LayerItemViewModel>();
+        foreach (var track in _projects.Current.Tracks)
+        {
+            if (track.Type is not (TrackType.Video or TrackType.Overlay)) continue;
+            foreach (var evt in track.Events)
+                items.Add(new LayerItemViewModel(evt, track));
+        }
+        return items
+            .OrderByDescending(i => i.EffectiveLayer)
+            .ThenByDescending(i => i.TrackName)
+            .ThenBy(i => i.StartSeconds)
+            .ToList();
+    }
+
+    /// <summary>Visual tracks for the Layers window's track section.</summary>
+    public IReadOnlyList<(Guid Id, string Name, int Layer)> VisualTracks() =>
+        _projects.Current.Tracks
+            .Where(t => t.Type is TrackType.Video or TrackType.Overlay)
+            .Select(t => (t.Id, t.Name, t.Layer))
+            .ToList();
+
     // ---------- Effect preview (click an effect to see it before adding) ----------
 
     private string? _previewEffectId;
@@ -1323,7 +1382,8 @@ public class MainViewModel : ObservableObject
             Start = Preview.PlayheadTime,
             Duration = DefaultEventDuration,
             SourceOut = DefaultEventDuration,
-            Text = style
+            Text = style,
+            Layer = Layers.Text
         };
         commands.Add(new AddEventCommand(track, evt));
 
