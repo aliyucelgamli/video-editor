@@ -32,7 +32,7 @@
                          Margin="0,14,0,0" Minimum="0" Maximum="100"/>
 
             <DockPanel Margin="0,10,0,0" LastChildFill="False">
-                <TextBlock x:Name="TimeText" FontSize="11" VerticalAlignment="Center"
+                <TextBlock x:Name="TimeInfoText" FontSize="11" VerticalAlignment="Center"
                            Foreground="{StaticResource SubtleTextBrush}"/>
                 <Button x:Name="CancelButton" DockPanel.Dock="Right"
                         Style="{StaticResource ToolButton}" Padding="16,7"

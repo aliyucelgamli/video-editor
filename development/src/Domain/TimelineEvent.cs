@@ -42,6 +42,9 @@ public class TimelineEvent
     public double Opacity { get; set; } = 1.0;
     public bool Muted { get; set; }
 
+    /// <summary>Set for generated text (title) events; null for media events.</summary>
+    public TextStyle? Text { get; set; }
+
     public Transform2D Transform { get; set; } = new();
     public List<EffectInstance> Effects { get; set; } = new();
     public List<KeyframeTrack> Keyframes { get; set; } = new();

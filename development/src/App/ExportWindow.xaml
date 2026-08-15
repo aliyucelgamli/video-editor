@@ -12,7 +12,11 @@
 
     <StackPanel Margin="14,12">
 
-        <TextBlock Text="FORMAT" Style="{StaticResource PanelHeader}" Margin="0,0,0,6"/>
+        <TextBlock Text="PRESET" Style="{StaticResource PanelHeader}" Margin="0,0,0,6"/>
+        <ComboBox x:Name="PresetBox" SelectionChanged="PresetBox_SelectionChanged"
+                  ToolTip="One click sets format, resolution, frame rate and quality"/>
+
+        <TextBlock Text="FORMAT" Style="{StaticResource PanelHeader}" Margin="0,12,0,6"/>
         <ListBox x:Name="FormatList"
                  Background="Transparent" BorderThickness="0"
                  ItemContainerStyle="{StaticResource MediaItemContainer}"

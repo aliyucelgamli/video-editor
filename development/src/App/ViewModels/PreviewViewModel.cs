@@ -3,6 +3,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
 using VideoEditor.App.Services;
+using VideoEditor.App.Ui;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Effects;
 using VideoEditor.MediaEngine.Ffmpeg;
@@ -19,7 +20,7 @@ namespace VideoEditor.App.ViewModels;
 /// </summary>
 public class PreviewViewModel : ObservableObject
 {
-    private const int MaxPreviewWidth = 640;
+    public const int MaxPreviewWidth = 640;
     private const double PlaybackFps = 24;
 
     private readonly FrameCompositor _compositor;
@@ -83,14 +84,7 @@ public class PreviewViewModel : ObservableObject
         }
     }
 
-    public string TimeLabel
-    {
-        get
-        {
-            var ts = TimeSpan.FromSeconds(Math.Max(0, _playheadTime));
-            return ts.TotalHours >= 1 ? ts.ToString(@"h\:mm\:ss\.f") : ts.ToString(@"m\:ss\.f");
-        }
-    }
+    public string TimeLabel => TimeText.Compact(_playheadTime);
 
     /// <summary>Moves the playhead and (optionally) renders the frame there.</summary>
     public void Seek(double time, bool render = true)
@@ -228,14 +222,6 @@ public class PreviewViewModel : ObservableObject
         CurrentFrame = _bitmap;
     }
 
-    private static (int Width, int Height) PreviewSize(Project project)
-    {
-        var settings = project.Settings;
-        var aspect = settings.Width > 0 && settings.Height > 0
-            ? (double)settings.Height / settings.Width
-            : 9.0 / 16.0;
-        var width = Math.Min(MaxPreviewWidth, Math.Max(64, settings.Width));
-        var height = (int)Math.Round(width * aspect);
-        return (width - width % 2, Math.Max(2, height - height % 2));
-    }
+    private static (int Width, int Height) PreviewSize(Project project) =>
+        FrameSizes.FitWithin(project.Settings.Width, project.Settings.Height, MaxPreviewWidth);
 }

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using VideoEditor.MediaEngine.Ffmpeg;
 
 namespace VideoEditor.MediaEngine.Frames;
@@ -131,5 +130,5 @@ public sealed class StreamingFramePipe : IDisposable
         return arguments;
     }
 
-    private static string Num(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string Num(double value) => FfmpegFormat.Number(value);
 }

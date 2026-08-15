@@ -84,11 +84,14 @@ Application.
 6. **Linked audio/video:** dropping a video with audio creates a video event + an audio
    event cross-linked via `LinkedEventId`; move/delete/stretch operate on both via
    composite commands.
-7. **Timeline interactions** (code-behind `MainWindow.xaml.cs`, logic in `MainViewModel`):
-   drag = move (with snap), **Shift + edge drag = time stretch** (duration changes,
-   `PlaybackRate = sourceSpan / duration`, source range untouched), fx button
-   (bottom-right of every clip) and right-click menu = attach effects / remove effects /
-   delete. Effects can also be dragged from the panel or double-clicked.
+7. **Timeline interactions** (code-behind `MainWindow.xaml.cs`, math in
+   `Application/Editing`, model changes in `MainViewModel`): drag = move (with snap),
+   **plain edge drag = trim** (rate fixed, source range follows — `EdgeTrim`),
+   **Shift + edge drag = time stretch** (duration changes,
+   `PlaybackRate = sourceSpan / duration`, source range untouched),
+   **Alt + drag = slip** (source slides, position fixed), corner grips = eased fades,
+   fx button (bottom-right of every clip) and right-click menu = attach effects /
+   remove effects / delete. Effects can also be dragged from the panel or double-clicked.
 
 ## Effect system (the core extension point)
 
@@ -105,7 +108,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-15, round 13)
+## Feature state (2026-08-15, round 14)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -131,8 +134,15 @@ top corner and drag inward; the eased opacity envelope is drawn on the clip; eas
 per fade via right-click — Linear/Sine/Quad/Cubic/Back families in `Domain/Easing`,
 audio maps to afade curves); **automatic crossfades** (same-track overlaps fade
 out/in across the overlap, video and audio identically — `Domain/Crossfade` +
-`FrameCompositor.EffectiveFadeFactor` + `AudioMixPlanner`); run.bat build-first flow.
-65 tests green.
+`FrameCompositor.EffectiveFadeFactor` + `AudioMixPlanner`); **plain edge trim + Alt slip**
+(`EdgeTrim` math, `TrimEventCommand`/`SlipEventCommand`, media-bound clamping, linked
+partners follow); **text (title) events** (`TextStyle` on the event, WPF rasterizer →
+`TextRasterCache`, compositor/export layer them like stills, Text toolbar button +
+edit dialog, transform gizmo works on titles, pre-rendered at export size before
+rendering); **export presets** (YouTube/TikTok/Instagram/Discord one-click in the
+export dialog); **dark native title bars** on every window (`App/Ui/DarkTitleBar`);
+shared utils (`App/Ui`: ChildWindowSlot, FrameBitmaps, TimeText; `FfmpegFormat`,
+`FrameSizes`); run.bat build-first flow. 69 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;

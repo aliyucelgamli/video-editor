@@ -21,6 +21,7 @@ public static class SerializationTests
                 Start = 3.5, Duration = 10, SourceIn = 2, SourceOut = 12,
                 PlaybackRate = 1.5, FadeInDuration = 0.5, FadeOutEasing = EasingType.OutBack,
                 Opacity = 0.8,
+                Text = new TextStyle { Content = "Hello", FontSize = 72, Bold = false },
                 Transform = { PositionX = 100, ScaleX = 0.5, Rotation = 45 },
                 Effects = { new EffectInstance { Type = "blur", Parameters = { ["radius"] = 4 } } },
                 Keyframes =
@@ -74,6 +75,8 @@ public static class SerializationTests
                 Assert.Close(3.5, loadedEvt.Start, "Event start");
                 Assert.Close(1.5, loadedEvt.PlaybackRate, "Playback rate");
                 Assert.Equal(EasingType.OutBack, loadedEvt.FadeOutEasing, "Fade easing");
+                Assert.True(loadedEvt.Text is { Content: "Hello", FontSize: 72, Bold: false },
+                    "Text style roundtrips");
                 Assert.Close(100, loadedEvt.Transform.PositionX, "Transform.PositionX");
                 Assert.Close(45, loadedEvt.Transform.Rotation, "Transform.Rotation");
                 Assert.Equal("blur", loadedEvt.Effects[0].Type, "Effect type");

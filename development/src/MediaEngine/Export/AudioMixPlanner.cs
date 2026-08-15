@@ -1,4 +1,4 @@
-using System.Globalization;
+using VideoEditor.MediaEngine.Ffmpeg;
 using VideoEditor.Domain;
 using VideoEditor.Domain.Effects;
 using VideoEditor.MediaEngine.Effects;
@@ -115,5 +115,5 @@ public static class AudioMixPlanner
         return arguments;
     }
 
-    private static string Num(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string Num(double value) => FfmpegFormat.Number(value);
 }

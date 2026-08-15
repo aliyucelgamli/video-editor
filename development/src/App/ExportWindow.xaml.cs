@@ -22,7 +22,22 @@ public partial class ExportWindow : Window
         ExportFormat.Wav
     };
 
+    /// <summary>One-click platform targets; index 0 is "Custom" (no changes).</summary>
+    private sealed record ExportPreset(
+        string Name, ExportFormat Format, int Width, int Height, double Fps, double Quality);
+
+    private static readonly ExportPreset[] Presets =
+    {
+        new("Custom", ExportFormat.Mp4H264, 0, 0, 0, -1),
+        new("YouTube 1080p", ExportFormat.Mp4H264, 1920, 1080, 30, 75),
+        new("YouTube 4K", ExportFormat.Mp4H264, 3840, 2160, 30, 80),
+        new("TikTok / Reels 9:16", ExportFormat.Mp4H264, 1080, 1920, 30, 75),
+        new("Instagram Square", ExportFormat.Mp4H264, 1080, 1080, 30, 75),
+        new("Discord (small file)", ExportFormat.Mp4H264, 1280, 720, 30, 40)
+    };
+
     private readonly string? _ffmpegPath;
+    private bool _applyingPreset;
 
     public ExportFormat SelectedFormat { get; private set; } = ExportFormat.Mp4H264;
     public int OutputWidth { get; private set; }
@@ -40,10 +55,18 @@ public partial class ExportWindow : Window
 
         FormatList.ItemsSource = Formats.Select(f => f.DisplayName()).ToList();
         FormatList.SelectedIndex = 0;
+        PresetBox.ItemsSource = Presets.Select(p => p.Name).ToList();
+        PresetBox.SelectedIndex = 0;
 
         WidthBox.Text = projectSettings.Width.ToString(CultureInfo.InvariantCulture);
         HeightBox.Text = projectSettings.Height.ToString(CultureInfo.InvariantCulture);
         FpsBox.Text = projectSettings.FrameRate.ToString("0.###", CultureInfo.InvariantCulture);
+
+        // Hand-editing any field turns the selection back into "Custom".
+        WidthBox.TextChanged += (_, _) => MarkCustomPreset();
+        HeightBox.TextChanged += (_, _) => MarkCustomPreset();
+        FpsBox.TextChanged += (_, _) => MarkCustomPreset();
+        QualitySlider.ValueChanged += (_, _) => MarkCustomPreset();
 
         var range = explicitRange?.Normalized();
         RangeInfo.Text = range != null
@@ -56,7 +79,28 @@ public partial class ExportWindow : Window
         if (FormatList.SelectedIndex < 0) return;
         SelectedFormat = Formats[FormatList.SelectedIndex];
         VideoSettings.Visibility = SelectedFormat.IsAudioOnly() ? Visibility.Collapsed : Visibility.Visible;
+        MarkCustomPreset();
         RefreshGpuPanel();
+    }
+
+    private void PresetBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PresetBox.SelectedIndex <= 0) return; // "Custom" changes nothing
+        var preset = Presets[PresetBox.SelectedIndex];
+
+        _applyingPreset = true;
+        FormatList.SelectedIndex = Array.IndexOf(Formats, preset.Format);
+        WidthBox.Text = preset.Width.ToString(CultureInfo.InvariantCulture);
+        HeightBox.Text = preset.Height.ToString(CultureInfo.InvariantCulture);
+        FpsBox.Text = preset.Fps.ToString("0.###", CultureInfo.InvariantCulture);
+        QualitySlider.Value = preset.Quality;
+        _applyingPreset = false;
+    }
+
+    private void MarkCustomPreset()
+    {
+        if (_applyingPreset || PresetBox is null) return;
+        PresetBox.SelectedIndex = 0;
     }
 
     /// <summary>Shows the GPU option only for formats that have GPU encoders.</summary>

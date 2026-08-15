@@ -51,7 +51,7 @@ public class EventViewModel : ObservableObject
 
         var media = project.Media.FindById(evt.MediaId);
         IsAudio = track.Type == TrackType.Audio;
-        IsVisual = !IsAudio && media != null;
+        IsVisual = !IsAudio && (media != null || evt.Text != null);
 
         ToolTip = BuildToolTip(evt);
         RefreshFadeVisuals();

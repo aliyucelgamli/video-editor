@@ -5,8 +5,10 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using VideoEditor.App.Mvvm;
+using VideoEditor.App.Ui;
 using VideoEditor.App.Services;
 using VideoEditor.Application.Commands;
+using VideoEditor.Application.Editing;
 using VideoEditor.Application.Effects;
 using VideoEditor.Application.Services;
 using VideoEditor.Application.UndoRedo;
@@ -43,6 +45,8 @@ public class MainViewModel : ObservableObject
     private readonly UserEffectLibrary _userEffects;
     private readonly FFmpegLocator _ffmpeg;
     private readonly FrameExtractor _frameExtractor;
+    private readonly TextRasterizerService _textRasterizer;
+    private readonly TextRasterCache _textRasters;
     private readonly MediaEnrichmentService _enrichment;
     private readonly TimelineVisualsService _visuals;
     private readonly ExportService _exporter;
@@ -83,6 +87,8 @@ public class MainViewModel : ObservableObject
         _frameExtractor = new FrameExtractor(_ffmpeg);
         var effectPipeline = new VideoEffectPipeline(_catalog);
         var compositor = new FrameCompositor(_frameExtractor, effectPipeline);
+        _textRasterizer = new TextRasterizerService(compositor.TextRasters);
+        _textRasters = compositor.TextRasters;
         _exporter = new ExportService(_ffmpeg, compositor, _catalog);
 
         var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
@@ -120,6 +126,7 @@ public class MainViewModel : ObservableObject
         SetRangeStartCommand = new RelayCommand(() => SetRangeEdge(isStart: true));
         SetRangeEndCommand = new RelayCommand(() => SetRangeEdge(isStart: false));
         SplitAtPlayheadCommand = new RelayCommand(SplitAtPlayhead);
+        AddTextCommand = new RelayCommand(() => AddTextRequested?.Invoke(this, EventArgs.Empty));
         ClearRangeCommand = new RelayCommand(ClearRange, () => HasExplicitRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
@@ -215,6 +222,7 @@ public class MainViewModel : ObservableObject
     public RelayCommand ZoomOutCommand { get; }
     public RelayCommand PlayPauseCommand { get; }
     public RelayCommand SplitAtPlayheadCommand { get; }
+    public RelayCommand AddTextCommand { get; }
     public RelayCommand SetRangeStartCommand { get; }
     public RelayCommand SetRangeEndCommand { get; }
     public RelayCommand ClearRangeCommand { get; }
@@ -424,6 +432,10 @@ public class MainViewModel : ObservableObject
         settings.Crf = crf;
         settings.UseHardwareEncoder = useHardwareEncoder;
         var rangeText = settings.Range != null ? " (selected range)" : " (whole project)";
+
+        // Text layers are WPF-rendered on the UI thread; warm the cache at the
+        // export size so the render pipeline finds them ready.
+        PreRenderTextRasters(width, height);
 
         IsExporting = true;
         ExportProgress = 0;
@@ -1162,6 +1174,150 @@ public class MainViewModel : ObservableObject
         return targets;
     }
 
+    // ---------- Text (title) events ----------
+
+    /// <summary>Raised when the Add Text dialog should open (handled by the window).</summary>
+    public event EventHandler? AddTextRequested;
+
+    /// <summary>Places a new title at the playhead on the overlay track (created on demand).</summary>
+    public void AddTextEvent(TextStyle style)
+    {
+        var project = _projects.Current;
+        var track = project.Tracks.FirstOrDefault(t => t.Type == TrackType.Overlay);
+        var commands = new List<IEditorCommand>();
+        if (track is null)
+        {
+            track = new Track { Name = "T1", Type = TrackType.Overlay };
+            commands.Add(new AddTrackCommand(project, track, 0)); // top lane renders above
+        }
+
+        var evt = new TimelineEvent
+        {
+            Name = TextEventName(style),
+            Start = Preview.PlayheadTime,
+            Duration = DefaultEventDuration,
+            SourceOut = DefaultEventDuration,
+            Text = style
+        };
+        commands.Add(new AddEventCommand(track, evt));
+
+        RasterizeTextStyle(style);
+        RunCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand($"Add text '{evt.Name}'", commands));
+        SelectEvent(evt.Id);
+        RequestPreviewRefresh();
+        StatusText = $"Text added at {FormatTime(evt.Start)} — use the clip's size button to place it";
+    }
+
+    public void EditTextEvent(Guid eventId, TextStyle style)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found ||
+            found.Event.Text is not { } oldStyle) return;
+
+        var evt = found.Event;
+        RasterizeTextStyle(style);
+        RunCommand(new CompositeCommand($"Edit text '{evt.Name}'", new List<IEditorCommand>
+        {
+            new SetValueCommand<TextStyle?>("Text style", oldStyle, style, v => evt.Text = v),
+            new SetValueCommand<string>("Text name", evt.Name, TextEventName(style), v => evt.Name = v)
+        }));
+        RequestPreviewRefresh();
+    }
+
+    public TextStyle? GetTextStyle(Guid eventId) =>
+        _projects.Current.FindEvent(eventId)?.Event.Text;
+
+    private static string TextEventName(TextStyle style)
+    {
+        var firstLine = style.Content.Split('\n')[0].Trim();
+        return firstLine.Length <= 24 ? firstLine : firstLine[..24] + "…";
+    }
+
+    /// <summary>Rasterizes a style at preview size (UI thread; cache makes repeats free).</summary>
+    private void RasterizeTextStyle(TextStyle style)
+    {
+        var settings = _projects.Current.Settings;
+        var (width, height) = FrameSizes.FitWithin(
+            settings.Width, settings.Height, PreviewViewModel.MaxPreviewWidth);
+        _textRasterizer.EnsureRendered(style, width, height, settings.Width);
+    }
+
+    /// <summary>Loaded projects bring text events with them — keep rasters warm.</summary>
+    private void RasterizeAllTextEvents()
+    {
+        foreach (var track in _projects.Current.Tracks)
+            foreach (var evt in track.Events)
+                if (evt.Text is { } style)
+                    RasterizeTextStyle(style);
+    }
+
+    private void PreRenderTextRasters(int width, int height)
+    {
+        foreach (var track in _projects.Current.Tracks)
+            foreach (var evt in track.Events)
+                if (evt.Text is { } style)
+                    _textRasterizer.EnsureRendered(style, width, height, _projects.Current.Settings.Width);
+    }
+
+    // ---------- Trim (plain edge drag) and slip (Alt+drag) ----------
+
+    /// <summary>
+    /// Trims one edge to the given timeline geometry, keeping the playback
+    /// rate fixed (the source range follows). Clamped to the media's bounds.
+    /// A linked partner is trimmed with the same timeline edge.
+    /// </summary>
+    public void TrimEvent(Guid eventId, bool fromLeftEdge, double newStart, double newDuration)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+
+        var commands = new List<IEditorCommand> { BuildTrim(found.Event, fromLeftEdge, newStart, newDuration) };
+        if (found.Event.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked)
+            commands.Add(BuildTrim(linked.Event, fromLeftEdge, newStart, newDuration));
+
+        RunCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand(commands[0].Description, commands));
+    }
+
+    private IEditorCommand BuildTrim(TimelineEvent evt, bool fromLeftEdge, double newStart, double newDuration) =>
+        EdgeTrim.BuildTrim(
+            evt, _projects.Current.Media.FindById(evt.MediaId)?.DurationSeconds,
+            fromLeftEdge, newStart, newDuration);
+
+    /// <summary>
+    /// Slips the source range by a timeline delta (drag right = show earlier
+    /// footage), clamped to the media bounds. Linked partners slip together.
+    /// </summary>
+    public void SlipEvent(Guid eventId, double deltaSeconds)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+
+        var commands = new List<IEditorCommand>();
+        AddSlip(commands, found.Event, deltaSeconds);
+        if (found.Event.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked)
+            AddSlip(commands, linked.Event, deltaSeconds);
+
+        if (commands.Count == 0)
+        {
+            StatusText = "Nothing to slip — the clip already shows its full source";
+            return;
+        }
+        RunCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand(commands[0].Description, commands));
+    }
+
+    private void AddSlip(List<IEditorCommand> commands, TimelineEvent evt, double deltaSeconds)
+    {
+        if (EdgeTrim.BuildSlip(
+                evt, _projects.Current.Media.FindById(evt.MediaId)?.DurationSeconds, deltaSeconds)
+            is { } slip)
+            commands.Add(slip);
+    }
+
     // ---------- Fades (corner grips on clips) ----------
 
     /// <summary>Live update while a fade grip is dragged — no undo entry yet.</summary>
@@ -1249,9 +1405,18 @@ public class MainViewModel : ObservableObject
             : evt.Contains(playhead) ? evt.SourceIn + (playhead - evt.Start) * evt.PlaybackRate
             : evt.SourceIn + Math.Max(0, evt.SourceOut - evt.SourceIn) / 2;
 
+        RawFrame? stageFrame = null;
+        if (evt.Text is { } style)
+        {
+            var settings = _projects.Current.Settings;
+            var (width, height) = FrameSizes.FitWithin(settings.Width, settings.Height, 720);
+            _textRasterizer.EnsureRendered(style, width, height, settings.Width);
+            stageFrame = _textRasters.TryGetShared(style, width, height);
+        }
+
         return new TransformEditorViewModel(
             evt, media, _projects.Current.Settings, _frameExtractor, sourceTime,
-            RunCommand, RequestPreviewRefresh);
+            RunCommand, RequestPreviewRefresh, stageFrame);
     }
 
     // ---------- Effects on events (drop target, fx button, context menu) ----------
@@ -1351,6 +1516,7 @@ public class MainViewModel : ObservableObject
         foreach (var item in _projects.Current.Media.Items)
             MediaItems.Add(new MediaItemViewModel(item, _visuals));
 
+        RasterizeAllTextEvents();
         RebuildRuler();
         RefreshSelectionPanels();
         NotifyRangeChanged();
@@ -1373,14 +1539,7 @@ public class MainViewModel : ObservableObject
 
     // ---------- Helpers ----------
 
-    private static string FormatTime(double seconds)
-    {
-        var ts = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        var fraction = Math.Abs(seconds - Math.Round(seconds)) > 0.001;
-        if (ts.TotalHours >= 1)
-            return ts.ToString(fraction ? @"h\:mm\:ss\.f" : @"h\:mm\:ss");
-        return ts.ToString(fraction ? @"m\:ss\.f" : @"m\:ss");
-    }
+    private static string FormatTime(double seconds) => TimeText.Compact(seconds);
 
     private static long? TryGetFileSize(string path)
     {

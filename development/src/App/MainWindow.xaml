@@ -343,6 +343,16 @@
                     </StackPanel>
                 </Button>
 
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        VerticalAlignment="Center" Margin="0,0,8,0"
+                        Command="{Binding AddTextCommand}"
+                        ToolTip="Add a title at the playhead (goes to the overlay track)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8D2;"/>
+                        <TextBlock Text="Text" Margin="6,0,0,0"/>
+                    </StackPanel>
+                </Button>
+
                 <StackPanel Orientation="Horizontal">
 
                 <Border Width="26" Height="26" CornerRadius="7"

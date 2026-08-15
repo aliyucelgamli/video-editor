@@ -23,6 +23,9 @@ public class FrameCompositor
     /// <summary>Shared frame source (used by the export renderer's fallback path).</summary>
     public FrameExtractor Extractor => _extractor;
 
+    /// <summary>Rasterized text layers, filled by the UI's text rasterizer.</summary>
+    public TextRasterCache TextRasters { get; } = new();
+
     /// <summary>
     /// Renders the timeline at <paramref name="time"/> into a BGRA canvas.
     /// Returns a black frame when nothing is visible.
@@ -46,16 +49,28 @@ public class FrameCompositor
                 if (!evt.Contains(time)) continue;
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var media = project.Media.FindById(evt.MediaId);
-                if (media is null || media.Type == MediaType.Audio) continue;
+                byte[] layer;
+                if (evt.Text is { } textStyle)
+                {
+                    // Rasterized by the UI; a private copy because effects mutate.
+                    var raster = TextRasters.TryGetShared(textStyle, width, height);
+                    if (raster is null) continue;
+                    layer = (byte[])raster.Bgra.Clone();
+                }
+                else
+                {
+                    var media = project.Media.FindById(evt.MediaId);
+                    if (media is null || media.Type == MediaType.Audio) continue;
 
-                var sourceTime = evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
-                var frame = await _extractor
-                    .GetFrameAsync(media.FilePath, media.Type == MediaType.Image ? 0 : sourceTime, width, height, cancellationToken)
-                    .ConfigureAwait(false);
-                if (frame is null) continue;
+                    var sourceTime = evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
+                    var frame = await _extractor
+                        .GetFrameAsync(media.FilePath, media.Type == MediaType.Image ? 0 : sourceTime, width, height, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (frame is null) continue;
+                    layer = frame.Bgra;
+                }
 
-                BlendLayerOnto(canvas, frame.Bgra, width, height, track, evt, time, project);
+                BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
             }
         }
 
@@ -102,6 +117,7 @@ public class FrameCompositor
             foreach (var evt in track.Events)
             {
                 if (!evt.Contains(time)) continue;
+                if (evt.Text != null) return null; // text always composites
                 var media = project.Media.FindById(evt.MediaId);
                 if (media is null || media.Type == MediaType.Audio) continue;
                 if (found != null) return null; // more than one layer → composite path

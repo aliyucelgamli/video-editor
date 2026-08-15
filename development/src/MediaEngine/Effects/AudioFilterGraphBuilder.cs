@@ -1,4 +1,4 @@
-using System.Globalization;
+using VideoEditor.MediaEngine.Ffmpeg;
 using VideoEditor.Domain;
 using VideoEditor.Domain.Effects;
 
@@ -121,5 +121,5 @@ public static class AudioFilterGraphBuilder
         return filters;
     }
 
-    private static string Num(double value) => value.ToString("0.####", CultureInfo.InvariantCulture);
+    private static string Num(double value) => FfmpegFormat.PreciseNumber(value);
 }

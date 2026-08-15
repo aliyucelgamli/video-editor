@@ -46,12 +46,19 @@ public sealed class SequentialCompositor : IDisposable
                 if (!evt.Contains(time)) continue;
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var media = project.Media.FindById(evt.MediaId);
-                if (media is null || media.Type == MediaType.Audio) continue;
-
-                var layer = await AcquireLayerAsync(
-                        evt, media, time, frameIndex, fps, width, height, cancellationToken)
-                    .ConfigureAwait(false);
+                byte[]? layer;
+                if (evt.Text is { } textStyle)
+                {
+                    layer = AcquireTextLayer(textStyle, width, height);
+                }
+                else
+                {
+                    var media = project.Media.FindById(evt.MediaId);
+                    if (media is null || media.Type == MediaType.Audio) continue;
+                    layer = await AcquireLayerAsync(
+                            evt, media, time, frameIndex, fps, width, height, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 if (layer is null) continue;
 
                 _compositor.BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
@@ -72,6 +79,25 @@ public sealed class SequentialCompositor : IDisposable
     {
         if (media.Type == MediaType.Image)
             return await AcquireStillAsync(evt, media, width, height, cancellationToken).ConfigureAwait(false);
+        return await AcquireVideoFrameAsync(evt, media, time, frameIndex, fps, width, height, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Text layers come pre-rasterized; copy into the scratch buffer.</summary>
+    private byte[]? AcquireTextLayer(TextStyle style, int width, int height)
+    {
+        var raster = _compositor.TextRasters.TryGetShared(style, width, height);
+        if (raster is null) return null;
+
+        _layerBuffer ??= new byte[width * height * 4];
+        Buffer.BlockCopy(raster.Bgra, 0, _layerBuffer, 0, raster.Bgra.Length);
+        return _layerBuffer;
+    }
+
+    private async Task<byte[]?> AcquireVideoFrameAsync(
+        TimelineEvent evt, MediaItem media, double time, long frameIndex, double fps,
+        int width, int height, CancellationToken cancellationToken)
+    {
 
         var stream = EnsureStream(evt, media, time, frameIndex, fps, width, height);
         if (stream.Broken)

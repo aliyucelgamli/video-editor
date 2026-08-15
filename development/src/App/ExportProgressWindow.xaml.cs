@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using VideoEditor.App.Ui;
 using VideoEditor.App.ViewModels;
 
 namespace VideoEditor.App;
@@ -52,7 +53,7 @@ public partial class ExportProgressWindow : Window
                 RunningPanel.Visibility = Visibility.Collapsed;
                 DonePanel.Visibility = Visibility.Visible;
                 DonePathText.Text = _session.OutputPath;
-                DoneTimeText.Text = $"Finished in {FormatSpan(_elapsed.Elapsed)}";
+                DoneTimeText.Text = $"Finished in {TimeText.Span(_elapsed.Elapsed)}";
                 break;
 
             case ExportSessionState.Failed:
@@ -80,14 +81,14 @@ public partial class ExportProgressWindow : Window
             .ToString(CultureInfo.InvariantCulture) + "%";
         Bar.Value = progress * 100;
 
-        var text = "Elapsed " + FormatSpan(_elapsed.Elapsed);
+        var text = "Elapsed " + TimeText.Span(_elapsed.Elapsed);
         if (progress > 0.02)
         {
             var remaining = TimeSpan.FromSeconds(
                 _elapsed.Elapsed.TotalSeconds * (1 - progress) / progress);
-            text += " — about " + FormatSpan(remaining) + " left";
+            text += " — about " + TimeText.Span(remaining) + " left";
         }
-        TimeText.Text = text;
+        TimeInfoText.Text = text;
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -144,7 +145,4 @@ public partial class ExportProgressWindow : Window
         _session.PropertyChanged -= Session_PropertyChanged;
     }
 
-    private static string FormatSpan(TimeSpan span) => span.TotalHours >= 1
-        ? span.ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)
-        : span.ToString(@"m\:ss", CultureInfo.InvariantCulture);
 }

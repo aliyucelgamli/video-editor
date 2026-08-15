@@ -15,6 +15,7 @@ public static class Program
         TimelineModelTests.Register();
         TransformGizmoTests.Register();
         FadeTests.Register();
+        TrimSlipTests.Register();
         MediaEngineTests.Register();
         FfmpegIntegrationTests.Register();
 

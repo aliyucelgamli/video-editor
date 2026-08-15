@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using VideoEditor.App.Ui;
 using VideoEditor.App.ViewModels;
 using VideoEditor.Domain;
 
@@ -22,7 +23,7 @@ public partial class MainWindow : Window
     private EffectDefinitionViewModel? _effectDragCandidate;
 
     // Event move / stretch state
-    private enum EventDragMode { None, Move, StretchLeft, StretchRight }
+    private enum EventDragMode { None, Move, StretchLeft, StretchRight, TrimLeft, TrimRight, Slip }
     private const double EdgeZonePx = 8.0;
     private EventDragMode _eventDragMode = EventDragMode.None;
     private EventViewModel? _movingEvent;
@@ -31,6 +32,7 @@ public partial class MainWindow : Window
     private double _movingEventStartX;
     private double _movingEventNewStart;
     private double _stretchNewDuration;
+    private double _slipDeltaSeconds;
     private bool _isDraggingEvent;
 
     // Ruler / lane scrub + yellow range bar drag state
@@ -49,6 +51,7 @@ public partial class MainWindow : Window
         };
         _viewModel.NewProjectRequested += (_, _) => ShowNewProjectDialog();
         _viewModel.ExportRequested += (_, _) => ShowExportDialog();
+        _viewModel.AddTextRequested += (_, _) => ShowAddTextDialog();
         _viewModel.ExportSessionStarted += (_, session) =>
         {
             // Deferred: ShowDialog pumps messages until the window closes, so
@@ -81,6 +84,22 @@ public partial class MainWindow : Window
         _viewModel.StartExport(
             dialog.SelectedFormat, dialog.OutputWidth, dialog.OutputHeight, dialog.OutputFps,
             dialog.Crf, dialog.UseHardwareEncoder);
+    }
+
+    /// <summary>Text button: style dialog, then a title lands at the playhead.</summary>
+    private void ShowAddTextDialog()
+    {
+        var dialog = new TextEventWindow { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _viewModel.AddTextEvent(dialog.TextStyle);
+    }
+
+    private void ShowEditTextDialog(Guid eventId)
+    {
+        if (_viewModel.GetTextStyle(eventId) is not { } style) return;
+        var dialog = new TextEventWindow(style) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _viewModel.EditTextEvent(eventId, dialog.TextStyle);
     }
 
     /// <summary>During playback, scrolls the timeline so the red playhead stays on screen.</summary>
@@ -310,13 +329,24 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Shift near an edge = time stretch (VEGAS-style); anywhere else = move.</summary>
+    /// <summary>
+    /// Plain edge drag = trim, Shift+edge = time stretch (VEGAS-style),
+    /// Alt anywhere = slip, plain inside = move.
+    /// </summary>
     private static EventDragMode DetectDragMode(Border border, double localX)
     {
-        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return EventDragMode.Move;
-        if (localX <= EdgeZonePx) return EventDragMode.StretchLeft;
-        if (localX >= border.ActualWidth - EdgeZonePx) return EventDragMode.StretchRight;
-        return EventDragMode.Move;
+        var onLeftEdge = localX <= EdgeZonePx;
+        var onRightEdge = localX >= border.ActualWidth - EdgeZonePx;
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+            return onLeftEdge ? EventDragMode.StretchLeft
+                : onRightEdge ? EventDragMode.StretchRight
+                : EventDragMode.Move;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
+            return EventDragMode.Slip;
+        return onLeftEdge ? EventDragMode.TrimLeft
+            : onRightEdge ? EventDragMode.TrimRight
+            : EventDragMode.Move;
     }
 
     private void EventBlock_MouseMove(object sender, MouseEventArgs e)
@@ -337,6 +367,9 @@ public partial class MainWindow : Window
             case EventDragMode.Move: DragMove(deltaX); break;
             case EventDragMode.StretchRight: DragStretch(deltaX, fromLeftEdge: false); break;
             case EventDragMode.StretchLeft: DragStretch(deltaX, fromLeftEdge: true); break;
+            case EventDragMode.TrimRight: DragTrim(deltaX, fromLeftEdge: false); break;
+            case EventDragMode.TrimLeft: DragTrim(deltaX, fromLeftEdge: true); break;
+            case EventDragMode.Slip: DragSlip(deltaX); break;
         }
     }
 
@@ -388,13 +421,52 @@ public partial class MainWindow : Window
             $"Stretch to {_stretchNewDuration:0.##}s ({speedFactor:0.##}x of current speed)";
     }
 
+    /// <summary>
+    /// Live trim feedback (same visual as stretch); the model changes once on
+    /// release, clamped to the media's bounds by the view model.
+    /// </summary>
+    private void DragTrim(double deltaX, bool fromLeftEdge)
+    {
+        var evt = _movingEvent!;
+        var pps = _viewModel.PixelsPerSecond;
+        var deltaSeconds = deltaX / pps;
+
+        if (fromLeftEdge)
+        {
+            var end = evt.StartSeconds + evt.DurationSeconds;
+            _movingEventNewStart = Math.Clamp(evt.StartSeconds + deltaSeconds, 0, end - 0.1);
+            _stretchNewDuration = end - _movingEventNewStart;
+        }
+        else
+        {
+            _movingEventNewStart = evt.StartSeconds;
+            _stretchNewDuration = Math.Max(0.1, evt.DurationSeconds + deltaSeconds);
+        }
+
+        var scale = _stretchNewDuration / Math.Max(0.001, evt.DurationSeconds);
+        var transform = new TransformGroup();
+        transform.Children.Add(new ScaleTransform(scale, 1));
+        if (fromLeftEdge)
+            transform.Children.Add(new TranslateTransform((_movingEventNewStart - evt.StartSeconds) * pps, 0));
+        _movingEventBorder!.RenderTransform = transform;
+        _viewModel.StatusText = $"Trim to {_stretchNewDuration:0.##}s";
+    }
+
+    /// <summary>Slip feedback: geometry is untouched, only the status reports the shift.</summary>
+    private void DragSlip(double deltaX)
+    {
+        _slipDeltaSeconds = deltaX / _viewModel.PixelsPerSecond;
+        _viewModel.StatusText = $"Slip {(_slipDeltaSeconds >= 0 ? "+" : string.Empty)}{_slipDeltaSeconds:0.##}s " +
+                                "(source slides, position stays)";
+    }
+
     private static void UpdateEventCursor(object sender, MouseEventArgs e)
     {
         if (sender is not Border border) return;
         var localX = e.GetPosition(border).X;
         var onEdge = localX <= EdgeZonePx || localX >= border.ActualWidth - EdgeZonePx;
-        border.Cursor = onEdge && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)
-            ? Cursors.SizeWE
+        border.Cursor = onEdge ? Cursors.SizeWE
+            : Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) ? Cursors.ScrollWE
             : Cursors.Hand;
     }
 
@@ -411,6 +483,7 @@ public partial class MainWindow : Window
         var wasDragging = _isDraggingEvent;
         var newStart = _movingEventNewStart;
         var newDuration = _stretchNewDuration;
+        var slipDelta = _slipDeltaSeconds;
 
         if (_movingEventBorder != null) _movingEventBorder.RenderTransform = null;
         if (_linkedEventBorder != null) _linkedEventBorder.RenderTransform = null;
@@ -419,18 +492,30 @@ public partial class MainWindow : Window
         _linkedEventBorder = null;
         _isDraggingEvent = false;
         _eventDragMode = EventDragMode.None;
+        _slipDeltaSeconds = 0;
 
         if (evt is null || !wasDragging) return;
 
-        if (mode == EventDragMode.Move)
-            _viewModel.MoveEvent(evt.Id, newStart);
-        else
-            _viewModel.StretchEvent(evt.Id, newStart, newDuration);
+        switch (mode)
+        {
+            case EventDragMode.Move:
+                _viewModel.MoveEvent(evt.Id, newStart);
+                break;
+            case EventDragMode.StretchLeft or EventDragMode.StretchRight:
+                _viewModel.StretchEvent(evt.Id, newStart, newDuration);
+                break;
+            case EventDragMode.TrimLeft or EventDragMode.TrimRight:
+                _viewModel.TrimEvent(evt.Id, mode == EventDragMode.TrimLeft, newStart, newDuration);
+                break;
+            case EventDragMode.Slip:
+                _viewModel.SlipEvent(evt.Id, slipDelta);
+                break;
+        }
     }
 
     // ---------- fx button (Event FX window) + right-click menu ----------
 
-    private EventFxWindow? _fxWindow;
+    private readonly ChildWindowSlot<EventFxWindow> _fxWindow = new();
 
     private void EventFx_Click(object sender, RoutedEventArgs e)
     {
@@ -442,16 +527,13 @@ public partial class MainWindow : Window
     /// <summary>Opens the per-clip Event FX window (one at a time).</summary>
     private void OpenFxWindow(EventViewModel evt)
     {
-        _fxWindow?.Close();
-        _fxWindow = new EventFxWindow(_viewModel, evt.Id, evt.Name) { Owner = this };
-        _fxWindow.Closed += (_, _) => _fxWindow = null;
-        _fxWindow.Show();
+        _fxWindow.Show(this, () => new EventFxWindow(_viewModel, evt.Id, evt.Name));
     }
 
     // ---------- size + "…" buttons (transform editor / Clip Properties) ----------
 
-    private EventPropertiesWindow? _propertiesWindow;
-    private TransformEditorWindow? _transformWindow;
+    private readonly ChildWindowSlot<EventPropertiesWindow> _propertiesWindow = new();
+    private readonly ChildWindowSlot<TransformEditorWindow> _transformWindow = new();
 
     /// <summary>Size button: the visual gizmo editor (audio clips fall back to Properties).</summary>
     private void EventSize_Click(object sender, RoutedEventArgs e)
@@ -479,19 +561,13 @@ public partial class MainWindow : Window
             OpenPropertiesWindow(eventId); // audio clip — nothing visual to transform
             return;
         }
-        _transformWindow?.Close();
-        _transformWindow = new TransformEditorWindow(editor) { Owner = this };
-        _transformWindow.Closed += (_, _) => _transformWindow = null;
-        _transformWindow.Show();
+        _transformWindow.Show(this, () => new TransformEditorWindow(editor));
     }
 
     private void OpenPropertiesWindow(Guid eventId)
     {
         if (_viewModel.CreateEventProperties(eventId) is not { } properties) return;
-        _propertiesWindow?.Close();
-        _propertiesWindow = new EventPropertiesWindow(properties) { Owner = this };
-        _propertiesWindow.Closed += (_, _) => _propertiesWindow = null;
-        _propertiesWindow.Show();
+        _propertiesWindow.Show(this, () => new EventPropertiesWindow(properties));
     }
 
     private static readonly (EasingType Type, string Label)[] EasingChoices =
@@ -603,6 +679,13 @@ public partial class MainWindow : Window
             menu.Items.Add(removeEffects);
 
             menu.Items.Add(new Separator());
+
+            if (_viewModel.GetTextStyle(evt.Id) != null)
+            {
+                var editText = new MenuItem { Header = "Edit Text…" };
+                editText.Click += (_, _) => ShowEditTextDialog(evt.Id);
+                menu.Items.Add(editText);
+            }
 
             var split = new MenuItem { Header = "Split at Playhead", InputGestureText = "S" };
             split.Click += (_, _) => _viewModel.SplitAtPlayheadCommand.Execute(null);

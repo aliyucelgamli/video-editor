@@ -1,7 +1,6 @@
-using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
+using VideoEditor.App.Ui;
 using VideoEditor.Application.Commands;
 using VideoEditor.Application.Editing;
 using VideoEditor.Domain;
@@ -26,6 +25,7 @@ public class TransformEditorViewModel : ObservableObject
     private readonly Action<IEditorCommand> _run;
     private readonly Action _previewRefresh;
     private readonly double[] _original;
+    private readonly RawFrame? _presetFrame;
     private bool _committed;
     private bool _lockAspect = true;
 
@@ -36,8 +36,10 @@ public class TransformEditorViewModel : ObservableObject
         FrameExtractor extractor,
         double sourceTime,
         Action<IEditorCommand> run,
-        Action previewRefresh)
+        Action previewRefresh,
+        RawFrame? presetFrame = null)
     {
+        _presetFrame = presetFrame;
         _event = evt;
         _extractor = extractor;
         _mediaPath = media?.FilePath;
@@ -132,20 +134,12 @@ public class TransformEditorViewModel : ObservableObject
     /// </summary>
     public async Task<ImageSource?> LoadFrameAsync(CancellationToken cancellationToken = default)
     {
+        if (_presetFrame is { } preset)
+            return FrameBitmaps.CreateFrozen(preset.Bgra, preset.Width, preset.Height);
         if (_mediaPath is null) return null;
 
-        var width = Math.Min(MaxStageFrameWidth, Math.Max(64, ProjectWidth));
-        var aspect = ProjectWidth > 0 ? (double)ProjectHeight / ProjectWidth : 9.0 / 16.0;
-        var height = Math.Max(2, (int)Math.Round(width * aspect));
-        width -= width % 2;
-        height -= height % 2;
-
+        var (width, height) = FrameSizes.FitWithin(ProjectWidth, ProjectHeight, MaxStageFrameWidth);
         var frame = await _extractor.GetFrameAsync(_mediaPath, _sourceTime, width, height, cancellationToken);
-        if (frame is null) return null;
-
-        var bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgra32, null);
-        bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Bgra, frame.Width * 4, 0);
-        bitmap.Freeze();
-        return bitmap;
+        return frame is null ? null : FrameBitmaps.CreateFrozen(frame.Bgra, frame.Width, frame.Height);
     }
 }

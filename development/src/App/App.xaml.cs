@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using VideoEditor.App.Ui;
 
 namespace VideoEditor.App;
 
@@ -10,6 +11,7 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandledException;
+        DarkTitleBar.ApplyToAllWindows(); // dark chrome instead of the white default
     }
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
