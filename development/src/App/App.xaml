@@ -348,6 +348,18 @@
             </Setter>
         </Style>
 
+        <!-- ============ Toolbar ============ -->
+        <!-- Buttons live in rounded segments instead of one flat strip, so the
+             bar reads as grouped tools rather than a row of loose icons. -->
+        <Style x:Key="ToolbarGroup" TargetType="Border">
+            <Setter Property="Background" Value="#FF23262D"/>
+            <Setter Property="BorderBrush" Value="#FF2E3340"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="7"/>
+            <Setter Property="Padding" Value="3,2"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+
         <!-- ============ ProgressBar ============ -->
         <Style x:Key="FlatProgressBar" TargetType="ProgressBar">
             <Setter Property="Height" Value="6"/>

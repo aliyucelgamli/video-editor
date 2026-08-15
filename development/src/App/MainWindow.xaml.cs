@@ -18,6 +18,9 @@ public partial class MainWindow : Window
     private const string EffectIdFormat = "VideoEditorEffectId";
     private const double DragThreshold = 4.0;
 
+    /// <summary>Whatever is being dragged floats above everything else.</summary>
+    private const int DragZIndex = 100;
+
     private readonly MainViewModel _viewModel = new();
     private readonly IDialogService _dialogs = new DialogService();
 
@@ -379,10 +382,84 @@ public partial class MainWindow : Window
         lane.LostMouseCapture += Lane_ScrubLost;
     }
 
-    /// <summary>Right-click anywhere on an empty lane clears the selection.</summary>
+    /// <summary>Right-click on empty timeline space: add things, manage lanes, zoom.</summary>
     private void Lane_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        _viewModel.ClearRange();
+        if (sender is not FrameworkElement lane) return;
+        var time = Math.Max(0, e.GetPosition(lane).X) / _viewModel.PixelsPerSecond;
+        var track = LaneTrack(sender);
+
+        var menu = new ContextMenu
+        {
+            PlacementTarget = lane,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint
+        };
+
+        var add = new MenuItem { Header = "Add" };
+        var addText = new MenuItem { Header = "Text…" };
+        addText.Click += (_, _) => { _viewModel.SeekTo(time); ShowAddTextDialog(); };
+        add.Items.Add(addText);
+
+        var addMedia = new MenuItem { Header = "Media Files… (video, image, audio)" };
+        addMedia.Click += (_, _) => _viewModel.ImportMediaCommand.Execute(null);
+        add.Items.Add(addMedia);
+        menu.Items.Add(add);
+
+        var addTrack = new MenuItem { Header = "Add Track" };
+        foreach (var (label, type) in new[]
+                 {
+                     ("Video Track", TrackType.Video),
+                     ("Text / Image Track", TrackType.Overlay),
+                     ("Audio Track", TrackType.Audio)
+                 })
+        {
+            var kind = type;
+            var item = new MenuItem { Header = label };
+            item.Click += (_, _) => _viewModel.AddTrack(kind);
+            addTrack.Items.Add(item);
+        }
+        menu.Items.Add(addTrack);
+
+        menu.Items.Add(new Separator());
+
+        var split = new MenuItem { Header = "Split at Playhead", InputGestureText = "S" };
+        split.Click += (_, _) => _viewModel.SplitAtPlayheadCommand.Execute(null);
+        menu.Items.Add(split);
+
+        var clearSelection = new MenuItem
+        {
+            Header = "Clear Selection",
+            IsEnabled = _viewModel.HasExplicitRange
+        };
+        clearSelection.Click += (_, _) => _viewModel.ClearRange();
+        menu.Items.Add(clearSelection);
+
+        menu.Items.Add(new Separator());
+
+        var layers = new MenuItem { Header = "Layers…" };
+        layers.Click += (_, _) => _viewModel.ShowLayersCommand.Execute(null);
+        menu.Items.Add(layers);
+
+        var timeline = new MenuItem { Header = "Timeline" };
+        var zoomIn = new MenuItem { Header = "Zoom In", InputGestureText = "+" };
+        zoomIn.Click += (_, _) => _viewModel.ZoomInCommand.Execute(null);
+        var zoomOut = new MenuItem { Header = "Zoom Out", InputGestureText = "-" };
+        zoomOut.Click += (_, _) => _viewModel.ZoomOutCommand.Execute(null);
+        timeline.Items.Add(zoomIn);
+        timeline.Items.Add(zoomOut);
+        if (track != null)
+        {
+            timeline.Items.Add(new Separator());
+            var trackLabel = new MenuItem { Header = $"Track: {track.Name}", IsEnabled = false };
+            timeline.Items.Add(trackLabel);
+        }
+        menu.Items.Add(timeline);
+
+        var settings = new MenuItem { Header = "Settings…" };
+        settings.Click += (_, _) => MenuSettings_Click(sender, e);
+        menu.Items.Add(settings);
+
+        menu.IsOpen = true;
         e.Handled = true;
     }
 
@@ -451,7 +528,11 @@ public partial class MainWindow : Window
 
         _movingEvent = evt;
         _movingEventBorder = border;
+        // Lift it over its neighbours, otherwise the clip you are holding
+        // disappears behind the ones it passes.
+        Panel.SetZIndex(border, DragZIndex);
         _linkedEventBorder = evt.LinkedEventId is Guid linkedId ? FindEventBorder(linkedId) : null;
+        if (_linkedEventBorder != null) Panel.SetZIndex(_linkedEventBorder, DragZIndex);
         _movingEventStartX = e.GetPosition(LanesScroll).X;
         _movingEventNewStart = evt.StartSeconds;
         _stretchNewDuration = evt.DurationSeconds;
@@ -642,8 +723,16 @@ public partial class MainWindow : Window
         var newDuration = _stretchNewDuration;
         var slipDelta = _slipDeltaSeconds;
 
-        if (_movingEventBorder != null) _movingEventBorder.RenderTransform = null;
-        if (_linkedEventBorder != null) _linkedEventBorder.RenderTransform = null;
+        if (_movingEventBorder != null)
+        {
+            _movingEventBorder.RenderTransform = null;
+            Panel.SetZIndex(_movingEventBorder, 0);
+        }
+        if (_linkedEventBorder != null)
+        {
+            _linkedEventBorder.RenderTransform = null;
+            Panel.SetZIndex(_linkedEventBorder, 0);
+        }
         _movingEvent = null;
         _movingEventBorder = null;
         _linkedEventBorder = null;
@@ -682,6 +771,7 @@ public partial class MainWindow : Window
         _draggingTrack = track;
         _trackDragStart = e.GetPosition(HeadersScroll);
         _trackDragActive = false;
+        Panel.SetZIndex(header, DragZIndex); // stay visible while it travels over other lanes
         header.CaptureMouse();
     }
 
@@ -707,7 +797,11 @@ public partial class MainWindow : Window
         var wasDragging = _trackDragActive;
         _draggingTrack = null;
         _trackDragActive = false;
-        if (sender is FrameworkElement header) header.RenderTransform = null;
+        if (sender is FrameworkElement header)
+        {
+            header.RenderTransform = null;
+            Panel.SetZIndex(header, 0);
+        }
         if (track is null || !wasDragging) return;
 
         // Lane height is fixed (56 + 2 margin), so the drop index follows from
@@ -775,7 +869,8 @@ public partial class MainWindow : Window
     private void OpenPropertiesWindow(Guid eventId)
     {
         if (_viewModel.CreateEventProperties(eventId) is not { } properties) return;
-        _propertiesWindow.Show(this, () => new EventPropertiesWindow(properties));
+        _propertiesWindow.Show(this, () => new EventPropertiesWindow(
+            properties, editText: () => ShowEditTextDialog(eventId)));
     }
 
     private static readonly (EasingType Type, string Label)[] EasingChoices =

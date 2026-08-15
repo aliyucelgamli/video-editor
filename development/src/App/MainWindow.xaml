@@ -433,6 +433,14 @@
                         <MenuItem Header="_About Video Editor" Click="MenuAbout_Click"/>
                     </MenuItem>
                 </Menu>
+
+                <!-- Render lives in the top-right corner, icon only -->
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        Background="#FF3A3115" VerticalAlignment="Center"
+                        Padding="9,4" Command="{Binding ExportCommand}"
+                        ToolTip="Export — renders the span between the two yellow bars (drag them, or set with I / O)">
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;" Foreground="#FFFFD54F"/>
+                </Button>
             </DockPanel>
         </Border>
 
@@ -444,59 +452,86 @@
                 Padding="10,6">
             <DockPanel>
 
-                <!-- Export lives top-right (VEGAS-style render button) -->
-                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
-                        Background="#FF3A3115" VerticalAlignment="Center"
-                        Command="{Binding ExportCommand}"
-                        ToolTip="Render to MP4 — exports the span between the two yellow bars on the timeline (drag them, or set with I / O)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;" Foreground="#FFFFD54F"/>
-                        <TextBlock Text="Export" Margin="6,0,0,0" FontWeight="SemiBold"/>
-                    </StackPanel>
-                </Button>
-
-                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
-                        VerticalAlignment="Center" Margin="0,0,8,0"
-                        Command="{Binding AddTextCommand}"
-                        ToolTip="Add a title at the playhead (goes to the overlay track)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8D2;"/>
-                        <TextBlock Text="Text" Margin="6,0,0,0"/>
-                    </StackPanel>
-                </Button>
 
                 <StackPanel Orientation="Horizontal">
 
-                <Button Style="{StaticResource ToolButton}" Command="{Binding NewProjectCommand}"
-                        ToolTip="New Project (Ctrl+N)">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7C3;"/>
-                </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}"
-                        ToolTip="Open Project (Ctrl+O)">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8E5;"/>
-                </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding SaveCommand}"
-                        ToolTip="Save Project (Ctrl+S)">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74E;"/>
-                </Button>
+                <!-- Project -->
+                <Border Style="{StaticResource ToolbarGroup}">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding NewProjectCommand}"
+                                ToolTip="New Project (Ctrl+N)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7C3;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}"
+                                ToolTip="Open Project (Ctrl+O)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8E5;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding SaveCommand}"
+                                ToolTip="Save Project (Ctrl+S)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74E;"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-                <Border Style="{StaticResource ToolbarSeparator}"/>
+                <!-- History -->
+                <Border Style="{StaticResource ToolbarGroup}">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}"
+                                ToolTip="{Binding UndoToolTip}">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A7;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding RedoCommand}"
+                                ToolTip="{Binding RedoToolTip}">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A6;"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-                <Button Style="{StaticResource ToolButton}" Command="{Binding ImportMediaCommand}"
-                        ToolTip="Import media files (or drop them anywhere in the library)">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
-                </Button>
+                <!-- Insert -->
+                <Border Style="{StaticResource ToolbarGroup}">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding ImportMediaCommand}"
+                                ToolTip="Import media files (or drop them anywhere in the library)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE896;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding AddTextCommand}"
+                                ToolTip="Add a title at the playhead">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8D2;"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-                <Border Style="{StaticResource ToolbarSeparator}"/>
+                <!-- Timeline tools -->
+                <Border Style="{StaticResource ToolbarGroup}">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding SplitAtPlayheadCommand}"
+                                ToolTip="Split at the playhead (S)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8C6;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding DeleteSelectedCommand}"
+                                ToolTip="Delete the selected clip (Del)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE74D;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding ShowLayersCommand}"
+                                ToolTip="Layers — what renders on top">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE81E;"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-                <Button Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}"
-                        ToolTip="{Binding UndoToolTip}">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A7;"/>
-                </Button>
-                <Button Style="{StaticResource ToolButton}" Command="{Binding RedoCommand}"
-                        ToolTip="{Binding RedoToolTip}">
-                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A6;"/>
-                </Button>
+                <!-- View -->
+                <Border Style="{StaticResource ToolbarGroup}">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding ZoomOutCommand}"
+                                ToolTip="Zoom out (-)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE71F;"/>
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Command="{Binding ZoomInCommand}"
+                                ToolTip="Zoom in (+)">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8A3;"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
 
                 </StackPanel>
             </DockPanel>

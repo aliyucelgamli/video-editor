@@ -40,6 +40,18 @@ public class EventPropertiesViewModel : ObservableObject
         HasVolume = volumeTarget != null;
         FileLabel = media?.FilePath ?? "(no source file)";
 
+        IsText = evt.Text != null;
+        IsAudioClip = !IsVisual;
+        // Text is generated, so it has no source footage to speed up or slow down.
+        HasPlaybackSpeed = !IsText && media != null;
+        TypeTitle = IsText ? "TEXT"
+            : IsAudioClip ? "AUDIO CLIP"
+            : media?.Type == MediaType.Image ? "IMAGE"
+            : "VIDEO CLIP";
+
+        RaiseLayerCommand = new RelayCommand(() => NudgeLayer(+1));
+        LowerLayerCommand = new RelayCommand(() => NudgeLayer(-1));
+
         var mediaInfo = media?.Width is int w && media.Height is int h ? $"  •  {w}×{h}" : string.Empty;
         InfoLabel = $"Timeline {evt.Start:0.##}s – {evt.End:0.##}s ({evt.Duration:0.##}s)" +
                     $"  •  Source {evt.SourceIn:0.##}s – {evt.SourceOut:0.##}s{mediaInfo}";
@@ -52,6 +64,15 @@ public class EventPropertiesViewModel : ObservableObject
     public string InfoLabel { get; }
     public bool IsVisual { get; }
     public bool HasVolume { get; }
+    public bool IsText { get; }
+    public bool IsAudioClip { get; }
+    public bool HasPlaybackSpeed { get; }
+
+    /// <summary>Header of the type-specific half ("VIDEO CLIP", "TEXT"…).</summary>
+    public string TypeTitle { get; }
+
+    public RelayCommand RaiseLayerCommand { get; }
+    public RelayCommand LowerLayerCommand { get; }
     public double MaxPositionX => _settings.Width;
     public double MaxPositionY => _settings.Height;
     public double MaxPositionXNegative => -_settings.Width;
@@ -89,6 +110,24 @@ public class EventPropertiesViewModel : ObservableObject
     }
 
     public string PositionYLabel => $"{PositionY:0} px";
+
+    // ---------- Layer (compositing order) ----------
+
+    public string LayerLabel => IsVisual
+        ? _event.Layer.ToString()
+        : "n/a";
+
+    private void NudgeLayer(int delta)
+    {
+        if (!IsVisual) return;
+        var evt = _event;
+        var target = Domain.Layers.Clamp(evt.Layer + delta);
+        if (target == evt.Layer) return;
+
+        _run(new SetValueCommand<int>(
+            $"Set layer of '{evt.Name}'", evt.Layer, target, v => evt.Layer = v));
+        Changed(nameof(LayerLabel));
+    }
 
     private void ResetTransform()
     {
