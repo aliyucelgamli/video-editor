@@ -22,7 +22,18 @@
 
         <!-- Track layers -->
         <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
-            <TextBlock Text="TRACKS" Style="{StaticResource PanelHeader}" Margin="0,0,0,4"/>
+            <DockPanel Margin="0,0,0,4">
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                        Padding="8,2" Click="AddTrack_Click"
+                        ToolTip="Add a new track (a separate lane for video, text/images or audio)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="Add track" Margin="5,0,0,0" FontSize="11"/>
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="TRACKS" Style="{StaticResource PanelHeader}" VerticalAlignment="Center"/>
+            </DockPanel>
             <ItemsControl x:Name="TrackList">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>

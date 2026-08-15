@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using VideoEditor.App.ViewModels;
+using VideoEditor.Domain;
 
 namespace VideoEditor.App;
 
@@ -91,6 +93,29 @@ public partial class LayersWindow : Window
 
         _viewModel.SetTrackLayer(trackId, current.Layer + delta);
         Refresh();
+    }
+
+    /// <summary>"+" → pick the kind of lane to add.</summary>
+    private void AddTrack_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = PlacementMode.Bottom };
+        foreach (var (label, type) in new[]
+                 {
+                     ("Video track", TrackType.Video),
+                     ("Text / image track", TrackType.Overlay),
+                     ("Audio track", TrackType.Audio)
+                 })
+        {
+            var kind = type;
+            var item = new MenuItem { Header = label };
+            item.Click += (_, _) =>
+            {
+                _viewModel.AddTrack(kind);
+                Refresh();
+            };
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
     }
 
     private static Guid? TagId(object sender) =>

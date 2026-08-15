@@ -19,7 +19,13 @@
 
         <!-- Track header row (left column) -->
         <DataTemplate x:Key="HeaderTemplate">
-            <Border Height="56" Margin="0,0,0,2" Background="{StaticResource PanelAltBrush}">
+            <Border Height="56" Margin="0,0,0,2" Background="{StaticResource PanelAltBrush}"
+                    Cursor="SizeNS"
+                    ToolTip="Drag to reorder this track"
+                    MouseLeftButtonDown="TrackHeader_MouseLeftButtonDown"
+                    MouseMove="TrackHeader_MouseMove"
+                    MouseLeftButtonUp="TrackHeader_MouseLeftButtonUp"
+                    LostMouseCapture="TrackHeader_LostCapture">
                 <DockPanel>
                     <Border DockPanel.Dock="Left" Width="4" Margin="0,5,0,5"
                             CornerRadius="2" Background="{Binding HeaderBrush}"/>
@@ -720,7 +726,7 @@
                         </Grid.RowDefinitions>
 
                         <Image Grid.Row="0" Source="{Binding Preview.CurrentFrame}" Margin="8"
-                               RenderOptions.BitmapScalingMode="LowQuality"/>
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
 
                         <!-- Placeholder overlay: hit-testable so the FFmpeg download button works -->
                         <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center">

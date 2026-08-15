@@ -286,7 +286,15 @@ public class MainViewModel : ObservableObject
     public double PlayheadX => Preview.PlayheadTime * _pixelsPerSecond;
 
     /// <summary>Moves the playhead (timeline click / ruler scrub) and renders that frame.</summary>
-    public void SeekTo(double time) => Preview.Seek(Math.Max(0, time));
+    /// <summary>
+    /// Moves the playhead. Clicking the timeline while playing stops playback
+    /// first, otherwise the play clock would immediately overwrite the click.
+    /// </summary>
+    public void SeekTo(double time)
+    {
+        Preview.Pause();
+        Preview.Seek(Math.Max(0, time));
+    }
 
     /// <summary>
     /// Preview re-render (slider drags, effect edits, layer changes…).
@@ -541,16 +549,47 @@ public class MainViewModel : ObservableObject
         if (!_projects.IsDirty) return true;
         if (isExit && !Settings.ConfirmOnExit) return true;
 
-        return _dialogs.Confirm(
-            "Unsaved Changes",
-            "This project has changes that have not been saved.",
-            confirmText: isExit ? "Close Anyway" : "Discard",
-            cancelText: "Keep Editing",
-            details: isExit
-                ? "Closing now discards them. You can turn this warning off or on in Options > Settings."
-                : "Continuing discards them.",
-            tone: DialogTone.Warning,
-            destructive: true);
+        if (!isExit)
+        {
+            return _dialogs.Confirm(
+                "Unsaved Changes",
+                "This project has changes that have not been saved.",
+                confirmText: "Discard",
+                cancelText: "Keep Editing",
+                details: "Continuing discards them.",
+                tone: DialogTone.Warning,
+                destructive: true);
+        }
+
+        // Closing: saving first is what most people want, so it leads.
+        var answer = _dialogs.Show(new DialogOptions
+        {
+            Title = "Unsaved Changes",
+            Message = "This project has changes that have not been saved.",
+            Details = "You can turn this warning off or on in Options > Settings.",
+            Tone = DialogTone.Warning,
+            Buttons = new[]
+            {
+                new DialogButton("Keep Editing", "cancel"),
+                new DialogButton("Close Without Saving", "discard", IsDestructive: true),
+                new DialogButton("Save and Close", "save", IsPrimary: true)
+            },
+            DismissResult = "cancel"
+        });
+
+        return answer switch
+        {
+            "save" => SaveBeforeExit(),
+            "discard" => true,
+            _ => false
+        };
+    }
+
+    /// <summary>Saves for the exit path; a cancelled Save As keeps the app open.</summary>
+    private bool SaveBeforeExit()
+    {
+        Save();
+        return !_projects.IsDirty;
     }
 
     /// <summary>Raised when the New Project dialog should open (handled by the window).</summary>
@@ -729,10 +768,22 @@ public class MainViewModel : ObservableObject
     /// Assets land where they belong regardless of the lane they were dropped
     /// on: video/images go to a visual track, audio to an audio track.
     /// </summary>
-    private Track? RouteToCompatibleTrack(MediaItem media, Track dropTarget) =>
-        IsCompatible(media.Type, dropTarget.Type)
-            ? dropTarget
-            : _projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type));
+    /// <summary>
+    /// Where a dropped asset actually lands: the lane under the cursor when it
+    /// accepts that kind of media, otherwise the first lane that does — and if
+    /// the project has none, a fresh lane of the right kind is created.
+    /// Video never ends up on an audio lane, and vice versa.
+    /// </summary>
+    private Track? RouteToCompatibleTrack(MediaItem media, Track dropTarget)
+    {
+        if (IsCompatible(media.Type, dropTarget.Type)) return dropTarget;
+
+        if (_projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type)) is { } existing)
+            return existing;
+
+        AddTrack(media.Type == MediaType.Audio ? TrackType.Audio : TrackType.Video);
+        return _projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type));
+    }
 
     public void DropMediaOnTrack(Guid mediaId, Guid trackId, double time)
     {
@@ -1241,6 +1292,49 @@ public class MainViewModel : ObservableObject
             foreach (var evt in track.Events.Where(Splittable))
                 targets.Add((track, evt));
         return targets;
+    }
+
+    // ---------- Tracks: reorder + add ----------
+
+    /// <summary>Moves a lane to a new position (header drag). Undoable.</summary>
+    public void MoveTrack(Guid trackId, int newIndex)
+    {
+        if (_projects.Current.FindTrack(trackId) is not { } track) return;
+        var command = new MoveTrackCommand(_projects.Current, track, newIndex);
+        if (!command.ChangesOrder) return;
+
+        RunCommand(command);
+        RequestPreviewRefresh();
+        StatusText = $"Moved '{track.Name}'";
+    }
+
+    /// <summary>Index of a lane, for drag feedback.</summary>
+    public int IndexOfTrack(Guid trackId) =>
+        _projects.Current.Tracks.FindIndex(t => t.Id == trackId);
+
+    /// <summary>Adds a lane of the given kind, named after the ones already there.</summary>
+    public void AddTrack(TrackType type)
+    {
+        var project = _projects.Current;
+        var prefix = type switch
+        {
+            TrackType.Video => "V",
+            TrackType.Audio => "A",
+            _ => "T"
+        };
+        var number = project.Tracks.Count(t => t.Type == type) + 1;
+        var track = new Track { Name = $"{prefix}{number}", Type = type };
+
+        // Video lanes group at the top, audio at the bottom, overlays above audio.
+        var index = type switch
+        {
+            TrackType.Video => project.Tracks.FindLastIndex(t => t.Type == TrackType.Video) + 1,
+            TrackType.Audio => project.Tracks.Count,
+            _ => project.Tracks.FindLastIndex(t => t.Type != TrackType.Audio) + 1
+        };
+
+        RunCommand(new AddTrackCommand(project, track, index));
+        StatusText = $"Added track '{track.Name}'";
     }
 
     // ---------- Layers (compositing order) ----------

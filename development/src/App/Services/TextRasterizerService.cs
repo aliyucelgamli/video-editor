@@ -49,13 +49,21 @@ public class TextRasterizerService
 
         var text = new FormattedText(
             style.Content, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            typeface, Math.Max(1, style.FontSize * scale), BrushFromHex(style.Color), 1.25)
+            typeface, Math.Max(1, style.FontSize * scale), BrushFromHex(style.Color),
+            pixelsPerDip: 1.0)
         {
             TextAlignment = TextAlignment.Center,
             MaxTextWidth = width
         };
 
         var visual = new DrawingVisual();
+        // Ideal formatting scales glyph outlines instead of snapping them to a
+        // pixel grid sized for the (small) preview canvas, and grayscale
+        // antialiasing avoids ClearType color fringes on transparent pixels.
+        TextOptions.SetTextFormattingMode(visual, TextFormattingMode.Ideal);
+        TextOptions.SetTextRenderingMode(visual, TextRenderingMode.Grayscale);
+        RenderOptions.SetEdgeMode(visual, EdgeMode.Unspecified);
+
         using (var context = visual.RenderOpen())
         {
             var origin = new Point(0, Math.Max(0, (height - text.Height) / 2));

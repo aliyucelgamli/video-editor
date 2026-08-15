@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 19)
+## Feature state (2026-08-16, round 20)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -167,9 +167,13 @@ New/Open still always ask); **layer (z-order) system** — every clip has a `Lay
 broken by lane order (top lane = bottom of the stack), shared by preview and export;
 Layers window (View > Layers…) lists clips top-first with bring-forward / send-backward
 and typed layer numbers plus per-track layers; clip right-click has a Layer submenu.
-This also fixed titles rendering *behind* the footage. Preview renders are debounced in
-one place, so scrubbing no longer spawns an ffmpeg process per mouse move.
-run.bat build-first flow. 76 tests green.
+This also fixed titles rendering *behind* the footage; lanes reorder by dragging their
+header (`MoveTrackCommand`), the Layers window can add lanes, and a dropped asset always
+lands on a lane of its own kind (one is created when the project has none). Preview
+renders are debounced in one place, so scrubbing no longer spawns an ffmpeg process per
+mouse move; clicking the timeline during playback pauses it on that frame; the preview
+composes at 960 px with high-quality scaling and ideal text formatting, so titles are
+crisp. run.bat build-first flow. 78 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;

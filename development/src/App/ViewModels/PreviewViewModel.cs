@@ -21,7 +21,12 @@ namespace VideoEditor.App.ViewModels;
 /// </summary>
 public class PreviewViewModel : ObservableObject
 {
-    public const int MaxPreviewWidth = 640;
+    /// <summary>
+    /// Preview composition width. Text and graphics are rasterized at this
+    /// size, so too small a canvas makes titles look soft once the monitor
+    /// scales the frame up.
+    /// </summary>
+    public const int MaxPreviewWidth = 960;
     private const double PlaybackFps = 24;
 
     private readonly FrameCompositor _compositor;
@@ -178,6 +183,16 @@ public class PreviewViewModel : ObservableObject
     {
         StopPlayback();
         Seek(0);
+    }
+
+    /// <summary>
+    /// Stops playback without moving the playhead — what clicking the timeline
+    /// during playback does, so the clicked frame is what you end up looking at.
+    /// </summary>
+    public void Pause()
+    {
+        if (!IsPlaying) return;
+        StopPlayback();
     }
 
     private void StopPlayback()

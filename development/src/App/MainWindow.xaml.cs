@@ -670,6 +670,56 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---------- Track headers: hold + drag to reorder lanes ----------
+
+    private TrackViewModel? _draggingTrack;
+    private Point _trackDragStart;
+    private bool _trackDragActive;
+
+    private void TrackHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement header || header.DataContext is not TrackViewModel track) return;
+        _draggingTrack = track;
+        _trackDragStart = e.GetPosition(HeadersScroll);
+        _trackDragActive = false;
+        header.CaptureMouse();
+    }
+
+    private void TrackHeader_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggingTrack is null || e.LeftButton != MouseButtonState.Pressed) return;
+        if (sender is not FrameworkElement header) return;
+
+        var offsetY = e.GetPosition(HeadersScroll).Y - _trackDragStart.Y;
+        if (!_trackDragActive && Math.Abs(offsetY) < DragThreshold) return;
+
+        _trackDragActive = true;
+        header.RenderTransform = new TranslateTransform(0, offsetY); // live feedback
+        _viewModel.StatusText = $"Moving '{_draggingTrack.Name}' — release to drop it";
+    }
+
+    private void TrackHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) =>
+        (sender as FrameworkElement)?.ReleaseMouseCapture();
+
+    private void TrackHeader_LostCapture(object sender, MouseEventArgs e)
+    {
+        var track = _draggingTrack;
+        var wasDragging = _trackDragActive;
+        _draggingTrack = null;
+        _trackDragActive = false;
+        if (sender is FrameworkElement header) header.RenderTransform = null;
+        if (track is null || !wasDragging) return;
+
+        // Lane height is fixed (56 + 2 margin), so the drop index follows from
+        // how far the header travelled.
+        const double laneHeight = 58.0;
+        var offsetY = Mouse.GetPosition(HeadersScroll).Y - _trackDragStart.Y;
+        var currentIndex = _viewModel.IndexOfTrack(track.Id);
+        if (currentIndex < 0) return;
+
+        _viewModel.MoveTrack(track.Id, currentIndex + (int)Math.Round(offsetY / laneHeight));
+    }
+
     // ---------- fx button (Event FX window) + right-click menu ----------
 
     private readonly ChildWindowSlot<EventFxWindow> _fxWindow = new();

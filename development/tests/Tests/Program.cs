@@ -19,6 +19,7 @@ public static class Program
         ShortcutTests.Register();
         PreviewSelectionTests.Register();
         LayerTests.Register();
+        TrackOrderTests.Register();
         MediaEngineTests.Register();
         FfmpegIntegrationTests.Register();
 
