@@ -65,6 +65,9 @@
                                         </Style>
                                     </Button.Style>
                                 </Button>
+                                <Button Style="{StaticResource CloseCircleButton}"
+                                        Command="{Binding DeleteCommand}"
+                                        ToolTip="Delete this track (its clips go with it)"/>
                             </StackPanel>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold"

@@ -436,6 +436,29 @@ public class MainViewModel : ObservableObject
             : $"Export end set to {FormatTime(playhead)} (O)";
     }
 
+    /// <summary>
+    /// Double-click on a yellow bar: snap the selection around everything on the
+    /// timeline — from the earliest clip's start to the latest one's end. Nothing
+    /// to select over an empty timeline, so it says so instead of collapsing.
+    /// </summary>
+    public void FitRangeToContent()
+    {
+        if (_projects.Current.ContentExtent() is not { } extent)
+        {
+            StatusText = "Nothing on the timeline to select";
+            return;
+        }
+
+        var current = _projects.Current.ExportRange;
+        if (current != null &&
+            Math.Abs(current.Start - extent.Start) < 0.0005 &&
+            Math.Abs(current.End - extent.End) < 0.0005)
+            return; // already exactly around the content — no empty undo step
+
+        CommitRange(extent);
+        StatusText = $"Selection fitted to the clips — {FormatTime(extent.Start)} to {FormatTime(extent.End)}";
+    }
+
     /// <summary>Clears the selection (right-click on the timeline, or Ctrl+Shift+R).</summary>
     public void ClearRange()
     {
@@ -1159,7 +1182,7 @@ public class MainViewModel : ObservableObject
     {
         if (targetTrackId is not { } id || id == currentTrack.Id) return currentTrack;
         var target = _projects.Current.Tracks.FirstOrDefault(t => t.Id == id);
-        return target != null && AcceptsEvent(target, evt) ? target : currentTrack;
+        return target != null && AcceptsEvent(target, evt, currentTrack) ? target : currentTrack;
     }
 
     /// <summary>
@@ -1167,8 +1190,8 @@ public class MainViewModel : ObservableObject
     /// or overlay lanes, sound on audio lanes. Same rule as media drops, but
     /// asked about a clip that already exists.
     /// </summary>
-    public bool AcceptsEvent(Track track, TimelineEvent evt) =>
-        TrackRouting.Accepts(_projects.Current, track, evt);
+    public bool AcceptsEvent(Track target, TimelineEvent evt, Track source) =>
+        TrackRouting.Accepts(_projects.Current, target, evt, source);
 
     /// <summary>Lane index the clip currently sits on, or -1.</summary>
     public int IndexOfTrackForEvent(Guid eventId) =>
@@ -1183,7 +1206,7 @@ public class MainViewModel : ObservableObject
         var tracks = _projects.Current.Tracks;
         if (index < 0 || index >= tracks.Count) return null;
         if (_projects.Current.FindEvent(eventId) is not { } found) return null;
-        return AcceptsEvent(tracks[index], found.Event) ? tracks[index].Id : null;
+        return AcceptsEvent(tracks[index], found.Event, found.Track) ? tracks[index].Id : null;
     }
 
     /// <summary>
@@ -1305,11 +1328,19 @@ public class MainViewModel : ObservableObject
     // ---------- Copy / paste / duplicate ----------
 
     /// <summary>
-    /// The copied clip, kept in the app rather than the Windows clipboard: a
+    /// A copied clip together with the lane it came from. The lane matters:
+    /// a copy belongs on the track you took it from, not on whichever track
+    /// happens to sit at the top and accept it.
+    /// </summary>
+    private readonly record struct ClipboardClip(
+        TimelineEvent Clip, Guid SourceTrackId, TrackRouting.ClipKind Kind);
+
+    /// <summary>
+    /// The copied clips, kept in the app rather than the Windows clipboard: a
     /// clip is a reference into this project's media plus its edit state, which
     /// means nothing to any other program. A copied A/V pair is kept together.
     /// </summary>
-    private List<TimelineEvent>? _clipboard;
+    private List<ClipboardClip>? _clipboard;
     private string _clipboardName = string.Empty;
 
     public bool CanPaste => _clipboard is { Count: > 0 };
@@ -1327,14 +1358,22 @@ public class MainViewModel : ObservableObject
         // "add the paste position" wherever it lands.
         var primary = found.Event.Clone();
         primary.Start = 0;
-        var copies = new List<TimelineEvent> { primary };
+        // The kind is decided now, on the lane the clip actually sits on: the
+        // sound half of a linked pair references the video's media item, so
+        // asking the media later would call it video and move it to a video lane.
+        var copies = new List<ClipboardClip>
+        {
+            new(primary, found.Track.Id,
+                TrackRouting.ClipKind.Of(_projects.Current, found.Track, found.Event))
+        };
 
         if (found.Event.LinkedEventId is Guid linkedId &&
             _projects.Current.FindEvent(linkedId) is { } linked)
         {
             var partner = linked.Event.Clone();
             partner.Start = linked.Event.Start - found.Event.Start;
-            copies.Add(partner);
+            copies.Add(new ClipboardClip(partner, linked.Track.Id,
+                TrackRouting.ClipKind.Of(_projects.Current, linked.Track, linked.Event)));
         }
 
         _clipboard = copies;
@@ -1373,16 +1412,16 @@ public class MainViewModel : ObservableObject
     /// the one the copy came from when it still fits, otherwise the first that
     /// accepts it — the same routing a media drop uses.
     /// </summary>
-    private void PasteAt(IReadOnlyList<TimelineEvent> clipboard, double start, string status)
+    private void PasteAt(IReadOnlyList<ClipboardClip> clipboard, double start, string status)
     {
         var commands = new List<IEditorCommand>();
         var pasted = new List<TimelineEvent>();
 
-        foreach (var source in clipboard)
+        foreach (var (source, sourceTrackId, kind) in clipboard)
         {
             var copy = source.Clone();
             copy.Start = Math.Max(0, start + source.Start);
-            if (TargetLaneFor(copy) is not { } lane) continue;
+            if (TargetLaneFor(kind, sourceTrackId) is not { } lane) continue;
             commands.Add(new AddEventCommand(lane, copy));
             pasted.Add(copy);
         }
@@ -1410,26 +1449,24 @@ public class MainViewModel : ObservableObject
         StatusText = $"{status} at {FormatTime(pasted[0].Start)}";
     }
 
-    /// <summary>Where a pasted clip goes: its own kind of lane, created if there is none.</summary>
-    private Track? TargetLaneFor(TimelineEvent evt)
+    /// <summary>
+    /// Where a pasted clip goes. First choice is always the lane it was copied
+    /// from — a duplicate belongs beside its original, not on whichever lane
+    /// happens to be topmost. Only when that lane is gone (or no longer suits
+    /// the clip) does it fall back to routing, creating a lane if there is none.
+    /// </summary>
+    private Track? TargetLaneFor(TrackRouting.ClipKind kind, Guid sourceTrackId)
     {
         var project = _projects.Current;
-        if (project.Tracks.FirstOrDefault(t => TrackRouting.Accepts(project, t, evt)) is { } lane)
+        if (TrackRouting.PreferredLane(project, kind, sourceTrackId) is { } lane)
             return lane;
 
-        if (evt.Text != null)
-        {
-            AddTrack(TrackType.Overlay);
-        }
-        else if (project.Media.FindById(evt.MediaId) is { } media)
-        {
-            AddTrack(TrackRouting.LaneKindFor(media.Type));
-        }
-        else
-        {
-            return null;
-        }
-        return project.Tracks.FirstOrDefault(t => TrackRouting.Accepts(project, t, evt));
+        // Nothing suitable on the timeline — a clip with no media at all cannot
+        // be placed anywhere, everything else gets a lane of its own kind.
+        if (!kind.IsText && !kind.HasMedia) return null;
+
+        AddTrack(TrackRouting.LaneKindFor(kind));
+        return project.Tracks.FirstOrDefault(track => kind.FitsOn(track.Type));
     }
 
     // ---------- Selected event volume (0–200%) ----------
@@ -1559,6 +1596,36 @@ public class MainViewModel : ObservableObject
         RunCommand(command);
         RequestPreviewRefresh();
         StatusText = $"Moved '{track.Name}'";
+    }
+
+    /// <summary>
+    /// Deletes a lane and everything on it (the round X on its header). An empty
+    /// lane goes without ceremony; one with clips asks first, because the clips
+    /// are the work and the lane is just where they sit.
+    /// </summary>
+    public void DeleteTrack(Guid trackId)
+    {
+        if (_projects.Current.FindTrack(trackId) is not { } track) return;
+
+        var command = new RemoveTrackCommand(_projects.Current, track);
+        if (command.EventCount > 0)
+        {
+            var clips = command.EventCount == 1 ? "1 clip" : $"{command.EventCount} clips";
+            if (!_dialogs.Confirm(
+                    "Delete Track",
+                    $"'{track.Name}' still has {clips} on it.",
+                    confirmText: "Delete Anyway",
+                    cancelText: "Keep Track",
+                    details: "They are deleted with the track. Ctrl+Z brings everything back.",
+                    tone: DialogTone.Warning,
+                    destructive: true))
+                return;
+        }
+
+        _selectedEventId = null;
+        RunCommand(command);
+        RequestPreviewRefresh();
+        StatusText = $"Deleted track '{track.Name}'";
     }
 
     /// <summary>Index of a lane, for drag feedback.</summary>
@@ -2050,7 +2117,8 @@ public class MainViewModel : ObservableObject
         TimelineWidth = Math.Max(1200, (duration + 30) * _pixelsPerSecond);
         OnPropertyChanged(nameof(TimelineWidth));
 
-        var callbacks = new TrackCallbacks(ToggleTrackMuted, ToggleTrackSolo, CommitTrackVolume, CommitTrackOpacity);
+        var callbacks = new TrackCallbacks(
+            ToggleTrackMuted, ToggleTrackSolo, CommitTrackVolume, CommitTrackOpacity, DeleteTrack);
         Tracks.Clear();
         foreach (var track in _projects.Current.Tracks)
             Tracks.Add(new TrackViewModel(

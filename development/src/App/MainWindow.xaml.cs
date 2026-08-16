@@ -1239,12 +1239,28 @@ public partial class MainWindow : Window
     private void Ruler_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var x = e.GetPosition(RulerSurface).X;
+        var onRangeBar = _viewModel.HasRange &&
+                         (Math.Abs(x - _viewModel.RangeStartX) <= 7 ||
+                          Math.Abs(x - _viewModel.RangeEndX) <= 7);
+
+        // Double-click: on a yellow bar it wraps the selection around every clip,
+        // anywhere else on the ruler it fits the zoom to them.
+        if (e.ClickCount == 2)
+        {
+            RulerSurface.ReleaseMouseCapture();
+            _rulerDrag = RulerDragMode.None;
+            if (onRangeBar) _viewModel.FitRangeToContent();
+            else ZoomToFitContent();
+            e.Handled = true;
+            return;
+        }
 
         _rulerDrag = RulerDragMode.Scrub;
-        if (_viewModel.HasRange)
+        if (onRangeBar)
         {
-            if (Math.Abs(x - _viewModel.RangeStartX) <= 7) _rulerDrag = RulerDragMode.RangeStart;
-            else if (Math.Abs(x - _viewModel.RangeEndX) <= 7) _rulerDrag = RulerDragMode.RangeEnd;
+            _rulerDrag = Math.Abs(x - _viewModel.RangeStartX) <= 7
+                ? RulerDragMode.RangeStart
+                : RulerDragMode.RangeEnd;
         }
 
         HandleRulerDrag(x);
@@ -1362,6 +1378,35 @@ public partial class MainWindow : Window
     {
         LanesScroll.ScrollToVerticalOffset(LanesScroll.VerticalOffset - e.Delta / 3.0);
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Double-click on the ruler: zoom so the clips fill the view exactly — no
+    /// empty space past the last one, nothing cut off before the first. Falls
+    /// back to a plain "show everything from zero" when the timeline is empty.
+    /// </summary>
+    private void ZoomToFitContent()
+    {
+        var viewport = LanesScroll.ViewportWidth;
+        if (viewport < 50) return; // not laid out yet
+
+        if (_viewModel.CurrentProject.ContentExtent() is not { } extent)
+        {
+            _viewModel.StatusText = "Nothing on the timeline to zoom to";
+            return;
+        }
+
+        // A small margin keeps the first and last clip edges off the viewport border.
+        const double marginPx = 24;
+        var span = Math.Max(0.05, extent.End - extent.Start);
+        var pps = Math.Clamp(
+            (viewport - 2 * marginPx) / span,
+            MainViewModel.MinPixelsPerSecond, MainViewModel.MaxPixelsPerSecond);
+
+        _viewModel.SetPixelsPerSecond(pps);
+        LanesScroll.ScrollToHorizontalOffset(Math.Max(0, extent.Start * pps - marginPx));
+        _viewModel.StatusText =
+            $"Zoomed to fit — {TimeText.Compact(extent.Start)} to {TimeText.Compact(extent.End)}";
     }
 
     private void ApplyZoom(double factor, double? anchorX)

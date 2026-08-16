@@ -11,7 +11,8 @@ public record TrackCallbacks(
     Action<Guid> ToggleMute,
     Action<Guid> ToggleSolo,
     Action<Guid, double, double> CommitVolume,
-    Action<Guid, double, double> CommitOpacity);
+    Action<Guid, double, double> CommitOpacity,
+    Action<Guid> Delete);
 
 /// <summary>Visual projection of a track and its events.</summary>
 public class TrackViewModel : ObservableObject
@@ -61,6 +62,7 @@ public class TrackViewModel : ObservableObject
 
         ToggleMuteCommand = new RelayCommand(() => _callbacks.ToggleMute(track.Id));
         ToggleSoloCommand = new RelayCommand(() => _callbacks.ToggleSolo(track.Id));
+        DeleteCommand = new RelayCommand(() => _callbacks.Delete(track.Id));
 
         foreach (var evt in track.Events.OrderBy(e => e.Start))
             Events.Add(new EventViewModel(evt, track, project, pixelsPerSecond, EventBrush, visuals)
@@ -85,6 +87,9 @@ public class TrackViewModel : ObservableObject
     public Brush EventBrush { get; }
     public RelayCommand ToggleMuteCommand { get; }
     public RelayCommand ToggleSoloCommand { get; }
+
+    /// <summary>The round X on the header: removes this lane and its clips.</summary>
+    public RelayCommand DeleteCommand { get; }
     public ObservableCollection<EventViewModel> Events { get; } = new();
 
     // ---------- Volume (0–200%, default 100) ----------

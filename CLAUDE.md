@@ -50,7 +50,7 @@ development/
     App/           WPF (MVVM). ViewModels + Services (TimelineVisualsService,
                    MediaEnrichmentService) + XAML. No FFmpeg calls in views/viewmodels —
                    always go through MediaEngine services.
-  tests/Tests/     Zero-dependency test suite (87 tests). Run: test.bat / dotnet run.
+  tests/Tests/     Zero-dependency test suite (92 tests). Run: test.bat / dotnet run.
 examples/          Tiny test assets (1080p clips, 64×64 images) for drag & drop testing.
 user/              User-editable assets (effects/*.vefx, templates, fonts, exports…).
                    NEVER deleted by updates.
@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 24)
+## Feature state (2026-08-16, round 25)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -211,7 +211,24 @@ asks nothing). **All popups are dark**: Menu, MenuItem (top-level, row and subme
 templates with gesture hints), ContextMenu and menu Separators
 (`{x:Static MenuItem.SeparatorStyleKey}` — the implicit style does not reach them), plus a
 polished ComboBox with a drop shadow and a tick on the selected row. No system-theme
-surface is left. run.bat build-first flow. 87 tests green.
+surface is left. **Track delete**: a round X on each track header removes the lane through
+`RemoveTrackCommand` (the clips travel with the command, so one undo restores lane,
+position and contents); a lane with clips asks first, an empty one just goes.
+**Ruler double-clicks** (both built on `Project.ContentExtent()` — earliest start to latest
+end across every track): on a yellow bar it wraps the selection around all the clips, on
+the ruler itself it zooms so they exactly fill the viewport. The clipboard remembers the
+lane each clip was copied from and `TrackRouting.PreferredLane` puts it back there —
+"first lane that accepts" had been sending every duplicate to the topmost track.
+**A clip's kind comes from the lane it sits on, not from its media** (`TrackRouting.ClipKind`):
+importing a video with sound makes two events sharing ONE media item, so reading the kind
+off the media called the sound half "video" and routed it onto a picture lane — that is why
+duplicating a sound clip appeared to duplicate the video. Same rule now governs cross-lane
+dragging, so linked audio can only be dragged between audio lanes. run.bat build-first flow.
+90 tests green.
+
+Terminology: a clip on the timeline is a `TimelineEvent` in code (VEGAS calls them
+events) and a "clip" in the UI. A *track* (or lane) is a row; a *layer* is the z-order
+number a clip carries — they are different things and the docs keep them apart.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;

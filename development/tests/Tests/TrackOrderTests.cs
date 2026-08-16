@@ -105,25 +105,113 @@ public static class TrackOrderTests
 
             // A title may sit on any visual lane, never on an audio lane.
             var title = new TimelineEvent { Text = new TextStyle { Content = "Hi" }, Duration = 2 };
-            Assert.True(TrackRouting.Accepts(project, video, title), "titles fit a video lane");
-            Assert.True(TrackRouting.Accepts(project, overlay, title), "titles fit an overlay lane");
-            Assert.False(TrackRouting.Accepts(project, audio, title), "titles do not fit an audio lane");
+            overlay.Events.Add(title);
+            Assert.True(TrackRouting.Accepts(project, video, title, overlay), "titles fit a video lane");
+            Assert.True(TrackRouting.Accepts(project, overlay, title, overlay), "titles fit an overlay lane");
+            Assert.False(TrackRouting.Accepts(project, audio, title, overlay), "titles do not fit an audio lane");
 
             var sound = new TimelineEvent { MediaId = song.Id, Duration = 2 };
-            Assert.True(TrackRouting.Accepts(project, audio, sound), "sound on an audio lane");
-            Assert.False(TrackRouting.Accepts(project, overlay, sound), "sound not on an overlay lane");
+            audio.Events.Add(sound);
+            Assert.True(TrackRouting.Accepts(project, audio, sound, audio), "sound on an audio lane");
+            Assert.False(TrackRouting.Accepts(project, overlay, sound, audio), "sound not on an overlay lane");
 
             var footage = new TimelineEvent { MediaId = clip.Id, Duration = 2 };
-            Assert.True(TrackRouting.Accepts(project, video, footage), "video on a video lane");
-            Assert.True(TrackRouting.Accepts(project, overlay, footage), "video on an overlay lane");
-            Assert.False(TrackRouting.Accepts(project, audio, footage), "video not on an audio lane");
+            video.Events.Add(footage);
+            Assert.True(TrackRouting.Accepts(project, video, footage, video), "video on a video lane");
+            Assert.True(TrackRouting.Accepts(project, overlay, footage, video), "video on an overlay lane");
+            Assert.False(TrackRouting.Accepts(project, audio, footage, video), "video not on an audio lane");
 
             // A clip whose media is gone belongs nowhere rather than everywhere.
             var orphan = new TimelineEvent { MediaId = Guid.NewGuid(), Duration = 2 };
-            Assert.False(TrackRouting.Accepts(project, video, orphan), "missing media is not routable");
+            Assert.False(TrackRouting.Accepts(project, video, orphan, video), "missing media is not routable");
 
             Assert.Equal(TrackType.Audio, TrackRouting.LaneKindFor(MediaType.Audio), "new lane for sound");
             Assert.Equal(TrackType.Video, TrackRouting.LaneKindFor(MediaType.Image), "new lane for stills");
+        });
+
+        TestRunner.Add("Paste: a copy lands back on the lane it came from", () =>
+        {
+            var project = new Project();
+            var t1 = new Track { Name = "T1", Type = TrackType.Overlay };
+            var t2 = new Track { Name = "T2", Type = TrackType.Overlay };
+            var t3 = new Track { Name = "T3", Type = TrackType.Overlay };
+            project.Tracks.Add(t1);
+            project.Tracks.Add(t2);
+            project.Tracks.Add(t3);
+
+            var title = new TimelineEvent { Text = new TextStyle { Content = "Hi" }, Duration = 2 };
+            t2.Events.Add(title);
+
+            // The bug this covers: every lane here accepts the clip, so "first
+            // that accepts" silently sent duplicates to the topmost lane.
+            var kind = TrackRouting.ClipKind.Of(project, t2, title);
+            Assert.Equal(t2, TrackRouting.PreferredLane(project, kind, t2.Id),
+                "the source lane wins over the topmost one");
+            Assert.Equal(t3, TrackRouting.PreferredLane(project, kind, t3.Id),
+                "and over any other lane too");
+
+            // Source lane deleted since the copy: fall back rather than fail.
+            project.Tracks.Remove(t2);
+            Assert.Equal(t1, TrackRouting.PreferredLane(project, kind, t2.Id),
+                "a missing source lane falls back to the first that accepts");
+
+            // Source lane exists but cannot hold this clip: fall back as well.
+            var audio = new Track { Name = "A1", Type = TrackType.Audio };
+            project.Tracks.Add(audio);
+            Assert.Equal(t1, TrackRouting.PreferredLane(project, kind, audio.Id),
+                "a source lane that no longer suits the clip is not used");
+
+            // Nothing suitable anywhere -> the caller has to make a lane.
+            var audioOnly = new Project();
+            audioOnly.Tracks.Add(new Track { Name = "A1", Type = TrackType.Audio });
+            Assert.True(TrackRouting.PreferredLane(audioOnly, kind, Guid.NewGuid()) is null,
+                "no lane can hold a title here");
+        });
+
+        TestRunner.Add("Linked pair: the sound half stays sound, on its own lane", () =>
+        {
+            // Importing a video with sound creates TWO events sharing ONE media
+            // item: the picture on V1 and its linked sound on A1. Reading the
+            // kind off the media calls that sound "video" — which is exactly how
+            // duplicating an audio clip used to land a copy on the video lane.
+            var project = new Project();
+            var v1 = new Track { Name = "V1", Type = TrackType.Video };
+            var v2 = new Track { Name = "V2", Type = TrackType.Video };
+            var a1 = new Track { Name = "A1", Type = TrackType.Audio };
+            var a2 = new Track { Name = "A2", Type = TrackType.Audio };
+            project.Tracks.Add(v1);
+            project.Tracks.Add(v2);
+            project.Tracks.Add(a1);
+            project.Tracks.Add(a2);
+
+            var movie = new MediaItem { Name = "movie.mp4", Type = MediaType.Video, HasAudio = true };
+            project.Media.Items.Add(movie);
+
+            var picture = new TimelineEvent { MediaId = movie.Id, Start = 0, Duration = 5 };
+            var sound = new TimelineEvent { MediaId = movie.Id, Start = 0, Duration = 5 };
+            picture.LinkedEventId = sound.Id;
+            sound.LinkedEventId = picture.Id;
+            v1.Events.Add(picture);
+            a1.Events.Add(sound);
+
+            var soundKind = TrackRouting.ClipKind.Of(project, a1, sound);
+            Assert.Equal(MediaType.Audio, soundKind.Media, "the lane it sits on says it is sound");
+            Assert.True(soundKind.FitsOn(TrackType.Audio), "sound fits an audio lane");
+            Assert.False(soundKind.FitsOn(TrackType.Video), "sound does not fit a video lane");
+
+            var pictureKind = TrackRouting.ClipKind.Of(project, v1, picture);
+            Assert.Equal(MediaType.Video, pictureKind.Media, "the picture half is still video");
+            Assert.False(pictureKind.FitsOn(TrackType.Audio), "picture does not fit an audio lane");
+
+            // Duplicating the sound must come back on A1, not on the topmost lane.
+            Assert.Equal(a1, TrackRouting.PreferredLane(project, soundKind, a1.Id),
+                "a duplicated sound clip stays on its own audio lane");
+            Assert.Equal(v1, TrackRouting.PreferredLane(project, pictureKind, v1.Id),
+                "and the picture half stays on its video lane");
+
+            // Dragging the sound between lanes must offer audio lanes only.
+            Assert.True(TrackRouting.Accepts(project, a2, sound, a1), "sound may move to another audio lane");
+            Assert.False(TrackRouting.Accepts(project, v2, sound, a1), "sound may not move to a video lane");
         });
     }
 }
