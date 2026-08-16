@@ -760,8 +760,21 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <Image Grid.Row="0" Source="{Binding Preview.CurrentFrame}" Margin="8"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <!-- Sharp while paused, cheap while playing: HighQuality resampling
+                             costs a few ms on every presented frame, which is a large slice
+                             of a 24 fps budget. -->
+                        <Image Grid.Row="0" Source="{Binding Preview.CurrentFrame}" Margin="8">
+                            <Image.Style>
+                                <Style TargetType="Image">
+                                    <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Preview.IsPlaying}" Value="True">
+                                            <Setter Property="RenderOptions.BitmapScalingMode" Value="LowQuality"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Image.Style>
+                        </Image>
 
                         <!-- Placeholder overlay: hit-testable so the FFmpeg download button works -->
                         <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center">

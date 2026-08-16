@@ -18,14 +18,28 @@ public record RawFrame(byte[] Bgra, int Width, int Height);
 /// </summary>
 public class FrameExtractor
 {
-    private const int CacheCapacity = 24; // ~24 × 0.9 MB at 640×360 — bounded and cheap
+    /// <summary>
+    /// Cache budget in bytes rather than entries: a frame is 0.9 MB at 640×360
+    /// but 2 MB at 960×540, and it is the memory that has to stay bounded.
+    /// 64 MB holds ~70 preview frames — a comfortable scrub history.
+    /// </summary>
+    private const long CacheBudgetBytes = 64L * 1024 * 1024;
 
     private readonly FFmpegLocator _locator;
     private readonly object _cacheGate = new();
     private readonly Dictionary<string, RawFrame> _cache = new();
     private readonly LinkedList<string> _recency = new();
+    private long _cachedBytes;
 
     public FrameExtractor(FFmpegLocator locator) => _locator = locator;
+
+    /// <summary>
+    /// ffmpeg <c>-hwaccel</c> value for single-frame decoding, or null for
+    /// software. Landing on a new position decodes a whole GOP, which is where
+    /// a GPU decoder can pay off; set from the user setting after
+    /// <see cref="HardwareDecoders.DetectAsync"/> has verified one works.
+    /// </summary>
+    public string? HardwareAccelerator { get; set; }
 
     public async Task<RawFrame?> GetFrameAsync(
         string mediaPath, double sourceTime, int width, int height,
@@ -57,6 +71,13 @@ public class FrameExtractor
                     $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black";
 
         var arguments = new List<string> { "-loglevel", "error" };
+        if (HardwareAccelerator is { Length: > 0 } accelerator)
+        {
+            // No -hwaccel_output_format: frames come back in system memory, so
+            // the filter chain and everything downstream stay unchanged.
+            arguments.Add("-hwaccel");
+            arguments.Add(accelerator);
+        }
         if (sourceTime > 0)
         {
             arguments.Add("-ss");
@@ -65,6 +86,7 @@ public class FrameExtractor
         arguments.AddRange(new[]
         {
             "-i", mediaPath,
+            "-an", "-sn", "-dn",  // one video frame — never open audio/subtitle/data streams
             "-frames:v", "1",
             "-vf", scale,
             "-f", "rawvideo",
@@ -102,9 +124,12 @@ public class FrameExtractor
             if (_cache.ContainsKey(key)) return;
             _cache[key] = frame;
             _recency.AddFirst(key);
-            while (_cache.Count > CacheCapacity && _recency.Last is { } oldest)
+            _cachedBytes += frame.Bgra.Length;
+
+            while (_cachedBytes > CacheBudgetBytes && _recency.Last is { } oldest)
             {
-                _cache.Remove(oldest.Value);
+                if (_cache.Remove(oldest.Value, out var evicted))
+                    _cachedBytes -= evicted.Bgra.Length;
                 _recency.RemoveLast();
             }
         }

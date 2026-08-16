@@ -141,8 +141,12 @@ public partial class MainWindow : Window
 
     private void MenuSettings_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsWindow(_viewModel.Settings, OpenShortcutsWindow) { Owner = this };
-        if (dialog.ShowDialog() == true) _viewModel.SaveSettings();
+        var dialog = new SettingsWindow(
+            _viewModel.Settings, OpenShortcutsWindow, _viewModel.RunPerformanceTestAsync) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _viewModel.SaveSettings();
+        _viewModel.ApplyPreviewQuality();
+        _viewModel.ApplyDecoderSetting();
     }
 
     /// <summary>File → New: resolution/fps dialog, then a fresh project.</summary>
@@ -236,7 +240,15 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         if (!_viewModel.ConfirmDiscardChanges(isExit: true))
+        {
             e.Cancel = true;
+            base.OnClosing(e);
+            return;
+        }
+
+        // Stops playback and kills any ffmpeg the preview kept warm — otherwise
+        // those decoders outlive the app as orphaned processes.
+        _viewModel.Preview.Shutdown();
         base.OnClosing(e);
     }
 

@@ -2,6 +2,8 @@
   "defaultExportFolder": null,
   "useHardwareEncoderByDefault": true,
   "confirmOnExit": true,
+  "previewWidth": 960,
+  "useHardwareDecoder": true,
   "shortcuts": {
     "file.export": [
       "Oem3"

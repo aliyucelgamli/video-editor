@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using VideoEditor.App.Mvvm;
 using VideoEditor.App.Services;
 using VideoEditor.App.Ui;
+using VideoEditor.Application.Settings;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Effects;
 using VideoEditor.MediaEngine.Ffmpeg;
@@ -21,16 +22,11 @@ namespace VideoEditor.App.ViewModels;
 /// </summary>
 public class PreviewViewModel : ObservableObject
 {
-    /// <summary>
-    /// Preview composition width. Text and graphics are rasterized at this
-    /// size, so too small a canvas makes titles look soft once the monitor
-    /// scales the frame up.
-    /// </summary>
-    public const int MaxPreviewWidth = 960;
     private const double PlaybackFps = 24;
 
     private readonly FrameCompositor _compositor;
     private readonly PlaybackEngine _engine;
+    private readonly ScrubRenderer _scrub;
     private readonly Func<Project> _getProject;
     private readonly PreviewAudioService? _audio;
 
@@ -54,6 +50,7 @@ public class PreviewViewModel : ObservableObject
     {
         _compositor = compositor;
         _engine = new PlaybackEngine(compositor, extractor, effects, locator);
+        _scrub = new ScrubRenderer(locator, compositor);
         _getProject = getProject;
         _audio = audio;
         _effectPreview = effectPreview;
@@ -73,6 +70,21 @@ public class PreviewViewModel : ObservableObject
     public RelayCommand PlayPauseCommand { get; }
     public RelayCommand StopCommand { get; }
     public RelayCommand ToggleLoopCommand { get; }
+
+    /// <summary>
+    /// Width the preview composes at (the monitor scales the result to fit).
+    /// Text and graphics are rasterized at this size, so a small canvas makes
+    /// titles look soft — but every pixel here is paid on every frame, which
+    /// makes this the single biggest playback-speed lever. Driven by the
+    /// preview-quality setting; see <see cref="PreviewQuality"/>.
+    /// </summary>
+    public int PreviewWidth
+    {
+        get => _previewWidth;
+        set => _previewWidth = Math.Clamp(value, 240, 1920);
+    }
+
+    private int _previewWidth = PreviewQuality.Normal.Width;
 
     /// <summary>Repeat the selected range (or the whole project) while playing.</summary>
     public bool IsLooping
@@ -124,9 +136,14 @@ public class PreviewViewModel : ObservableObject
     /// are coalesced: dragging the playhead fires dozens of these per second
     /// and every render spawns an ffmpeg process, so only the last one in a
     /// short window actually decodes — that is what keeps scrubbing smooth.
+    ///
+    /// <paramref name="modelChanged"/> must be true when the timeline itself
+    /// changed: the scrub renderer keeps decoders positioned on the old clip
+    /// layout and has to drop them.
     /// </summary>
-    public void RequestRender()
+    public void RequestRender(bool modelChanged = false)
     {
+        if (modelChanged) _scrub.Invalidate();
         if (IsPlaying) return; // the play loop owns the screen
         _renderDebounce.Stop();
         _renderDebounce.Start();
@@ -161,6 +178,10 @@ public class PreviewViewModel : ObservableObject
         // Outside the selection (or sitting on its end) → start from its beginning.
         if (_playheadTime < start || _playheadTime >= end - 0.02) PlayheadTime = start;
 
+        // Playback runs its own decoders; the scrub ones would just hold
+        // ffmpeg processes open for the whole run.
+        _scrub.Invalidate();
+
         IsPlaying = true;
         var cts = new CancellationTokenSource();
         _playbackCts = cts;
@@ -183,6 +204,18 @@ public class PreviewViewModel : ObservableObject
     {
         StopPlayback();
         Seek(0);
+    }
+
+    /// <summary>
+    /// Releases everything holding an ffmpeg process (called when the window
+    /// closes). Without this the warm scrub decoders would be orphaned.
+    /// </summary>
+    public void Shutdown()
+    {
+        StopPlayback();
+        _renderDebounce.Stop();
+        _renderCts?.Cancel();
+        _scrub.Dispose();
     }
 
     /// <summary>
@@ -266,7 +299,10 @@ public class PreviewViewModel : ObservableObject
         RawFrame frame;
         try
         {
-            frame = await _compositor.ComposeAsync(
+            // Not ComposeAsync directly: the scrub renderer reuses decoders it
+            // primed at the previous position, so dragging the playhead forward
+            // costs a few ms per frame instead of a seek+decode per layer.
+            frame = await _scrub.RenderAsync(
                 project, time, width, height, cancellationToken, _effectPreview?.Invoke());
         }
         catch (OperationCanceledException)
@@ -291,6 +327,6 @@ public class PreviewViewModel : ObservableObject
         CurrentFrame = _bitmap;
     }
 
-    private static (int Width, int Height) PreviewSize(Project project) =>
-        FrameSizes.FitWithin(project.Settings.Width, project.Settings.Height, MaxPreviewWidth);
+    private (int Width, int Height) PreviewSize(Project project) =>
+        FrameSizes.FitWithin(project.Settings.Width, project.Settings.Height, PreviewWidth);
 }

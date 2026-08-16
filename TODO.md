@@ -53,18 +53,50 @@
     target).
 17. **Diff-based RebuildFromModel** — update changed track/event view models
     instead of rebuilding everything on every command.
-18. **Playback overlap speed-up** — use `SequentialCompositor` on the
-    playback composite path too (currently one process per frame during
-    overlaps; crossfades and text overlays make overlaps common now).
-19. **Split of a linked pair** — cross-link the two second halves
+18. **Backward scrub reuse** — `ScrubRenderer` only serves requests that move
+    FORWARD from the primed position (a stream cannot rewind). Dragging the
+    playhead left is cold every time. A small ring of recently composed frames
+    around the playhead would cover it.
+19. **Reusable transform buffer** — `FrameCompositor.ApplyTransform` allocates
+    a full frame per layer per frame (~1 MB at 640px, ~8 MB at 1080p); take a
+    caller-owned scratch buffer like `SequentialCompositor` already does for
+    stills.
+20. **Split of a linked pair** — cross-link the two second halves
     (`SplitEventCommand` leaves them unlinked).
-20. **Dark ContextMenu + menu dropdown styling** (top-level menu bar is dark,
-    the popup submenus still use the light system theme; app dialogs are already
-    themed via DialogWindow); fix the stale event reference in
-    EventPropertiesWindow.
-21. **More settings** — autosave interval, preview quality, single-key
-    shortcut suppression while a text box has focus.
+21. **Dark ContextMenu + menu dropdown styling** (top-level menu bar and
+    ComboBoxes are dark now, the popup submenus still use the light system
+    theme; app dialogs are already themed via DialogWindow); fix the stale event
+    reference in EventPropertiesWindow.
+22. **More settings** — autosave interval, single-key shortcut suppression
+    while a text box has focus.
     Also: a separate "playback selection" if the shared yellow range ever feels
     wrong for export vs loop (they are one range today, VEGAS-style).
-22. **Menu InputGestureText from the ShortcutMap** — menu hints are static
+23. **Menu InputGestureText from the ShortcutMap** — menu hints are static
     defaults today and go stale after remapping.
+
+## Playback performance — researched options, in order of value
+
+Run **Settings → Diagnostics → Run performance test** first; the report says
+which of these the machine actually needs.
+
+24. **Decide on GPU decoding with the numbers.** `HardwareDecoders` detects and
+    verifies an accelerator and Settings > Playback can switch it on for
+    single-frame decoding (off by default); the report times cold scrub with and
+    without it. If the GPU line wins on real machines, make it the default and
+    extend it to `StreamingFramePipe`; if it loses, delete the setting rather
+    than leaving a knob nobody should touch.
+25. **Proxy media** (also P2 #12) — the largest and most reliable win for 4K
+    footage: edit against 720p intermediates, export from the originals.
+26. **SIMD pixel operations** — `System.Numerics.Vector<T>` over the BGRA
+    buffers in blend/opacity/flatten. Zero dependencies, ~4-8x on the pixel
+    loops. Only worth it once decoding is no longer dominant.
+27. **D3DImage / hardware surface presentation** — replaces `WriteableBitmap`
+    and removes one full-frame CPU copy per presented frame. Large change
+    (needs a D3D9Ex device via interop) and only pays off when rendering is
+    already under budget.
+28. **Third-party engines rejected for now** — SkiaSharp (fast raster, but a
+    NuGet dependency and it does not solve decoding), LibVLCSharp / mpv
+    (excellent players, but they own the pipeline and cannot composite our
+    layer/effect stack), MediaFoundation interop (Windows-only, large surface
+    area). All conflict with the zero-dependency rule; revisit only if the
+    measurements above stop being enough.

@@ -112,10 +112,23 @@ public class PlaybackEngine
         byte[]? imageBase = null;
         var imageEventId = Guid.Empty;
 
+        // Overlapping layers reuse the export renderer: one long-lived decoder
+        // per event instead of a fresh seek+decode process per layer per frame.
+        SequentialCompositor? overlap = null;
+        byte[]? overlapCanvas = null;
+        var overlapStartTime = 0.0;
+        long overlapFrameIndex = 0;
+
         void DropPipe()
         {
             pipe?.Dispose();
             pipe = null;
+        }
+
+        void DropOverlap()
+        {
+            overlap?.Dispose();
+            overlap = null;
         }
 
         try
@@ -130,6 +143,8 @@ public class PlaybackEngine
                 // ---- Single video layer → stream it ----
                 if (layer is { Media.Type: MediaType.Video })
                 {
+                    DropOverlap();
+
                     var expectedFrameTime = pipeStartTime + pipeFrameIndex / fps;
                     var needsRestart =
                         pipe is null ||
@@ -187,6 +202,8 @@ public class PlaybackEngine
                 // ---- Single still image → decode once, republish with effects ----
                 if (layer is { Media.Type: MediaType.Image })
                 {
+                    DropOverlap();
+
                     if (imageBase is null || imageEventId != layer.Event.Id)
                     {
                         var raw = await _extractor
@@ -206,17 +223,49 @@ public class PlaybackEngine
                     continue;
                 }
 
-                // ---- Overlapping layers / empty spot → full composition ----
+                // ---- Overlapping layers (text over video…) / empty spot ----
+                // Rendered sequentially so every source keeps ONE decoder alive
+                // for the whole run. Composing frame by frame here used to cost
+                // 100+ ms per layer and was the main source of preview stutter.
                 try
                 {
-                    var composed = await _compositor
-                        .ComposeAsync(project, t, width, height, token, previewProvider?.Invoke())
+                    var expectedOverlapTime = overlapStartTime + overlapFrameIndex / fps;
+                    if (overlap is null || t - expectedOverlapTime > ReseekBehindSeconds)
+                    {
+                        DropOverlap();
+                        overlap = new SequentialCompositor(_locator, _compositor);
+                        overlapStartTime = t;
+                        overlapFrameIndex = 0;
+                    }
+
+                    var length = width * height * 4;
+                    if (overlapCanvas is null || overlapCanvas.Length != length)
+                        overlapCanvas = new byte[length];
+
+                    var overlapTime = overlapStartTime + overlapFrameIndex / fps;
+                    await overlap.RenderAsync(
+                            project, overlapTime, overlapFrameIndex, fps,
+                            overlapCanvas, width, height, token, previewProvider?.Invoke())
                         .ConfigureAwait(false);
-                    mailbox.Publish(composed.Bgra, composed.Width, composed.Height);
+                    overlapFrameIndex++;
+
+                    // Behind the clock → keep decoding, skip presenting.
+                    if (overlapTime < now() - StaleFrameSeconds) continue;
+                    mailbox.Publish(overlapCanvas, width, height);
+
+                    var overlapAhead = overlapTime - now();
+                    if (overlapAhead > 0.005)
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(overlapAhead, 0.5)), token)
+                            .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { throw; }
-                catch { /* a missing file must not kill playback */ }
-                await Task.Delay(10, token).ConfigureAwait(false);
+                catch
+                {
+                    // A missing file or a mid-frame edit must not kill playback;
+                    // restart the renderer so the next frame is clean.
+                    DropOverlap();
+                    await Task.Delay(20, token).ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -226,6 +275,7 @@ public class PlaybackEngine
         finally
         {
             DropPipe();
+            DropOverlap();
         }
     }
 

@@ -17,6 +17,7 @@ using VideoEditor.Application.UndoRedo;
 using VideoEditor.Domain;
 using VideoEditor.Domain.Effects;
 using VideoEditor.MediaEngine;
+using VideoEditor.MediaEngine.Diagnostics;
 using VideoEditor.MediaEngine.Effects;
 using VideoEditor.MediaEngine.Export;
 using VideoEditor.MediaEngine.Ffmpeg;
@@ -55,6 +56,8 @@ public class MainViewModel : ObservableObject
     private readonly MediaEnrichmentService _enrichment;
     private readonly TimelineVisualsService _visuals;
     private readonly ExportService _exporter;
+    private readonly FrameCompositor _compositor;
+    private readonly VideoEffectPipeline _effectPipeline;
 
     private string _statusText = "Ready — drop media files into the library or a track";
     private double _pixelsPerSecond = 20.0;
@@ -93,16 +96,18 @@ public class MainViewModel : ObservableObject
         Shortcuts = new ShortcutMap(Settings.Shortcuts);
 
         _frameExtractor = new FrameExtractor(_ffmpeg);
-        var effectPipeline = new VideoEffectPipeline(_catalog);
-        var compositor = new FrameCompositor(_frameExtractor, effectPipeline);
-        _textRasterizer = new TextRasterizerService(compositor.TextRasters);
-        _textRasters = compositor.TextRasters;
-        _exporter = new ExportService(_ffmpeg, compositor, _catalog);
+        _effectPipeline = new VideoEffectPipeline(_catalog);
+        _compositor = new FrameCompositor(_frameExtractor, _effectPipeline);
+        _textRasterizer = new TextRasterizerService(_compositor.TextRasters);
+        _textRasters = _compositor.TextRasters;
+        _exporter = new ExportService(_ffmpeg, _compositor, _catalog);
 
         var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
         Preview = new PreviewViewModel(
-            compositor, _frameExtractor, effectPipeline, _ffmpeg, () => _projects.Current, previewAudio,
+            _compositor, _frameExtractor, _effectPipeline, _ffmpeg, () => _projects.Current, previewAudio,
             effectPreview: BuildEffectPreview);
+        Preview.PreviewWidth = Settings.PreviewWidth;
+        ApplyDecoderSetting();
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -164,6 +169,76 @@ public class MainViewModel : ObservableObject
     {
         Settings.Shortcuts = Shortcuts.ToOverrides();
         _settingsService.Save(Settings);
+    }
+
+    /// <summary>
+    /// Applies the preview-quality setting. Text rasters are size-specific, so
+    /// they are re-rendered before the next frame is composed.
+    /// </summary>
+    public void ApplyPreviewQuality()
+    {
+        if (Preview.PreviewWidth == Settings.PreviewWidth) return;
+        Preview.PreviewWidth = Settings.PreviewWidth;
+        _textRasters.Clear();
+        RasterizeAllTextEvents();
+        RequestPreviewRefresh();
+    }
+
+    /// <summary>
+    /// Turns GPU frame decoding on or off. Detection runs in the background and
+    /// verifies the accelerator really works; until then decoding stays on the CPU.
+    /// </summary>
+    public void ApplyDecoderSetting()
+    {
+        if (!Settings.UseHardwareDecoder)
+        {
+            _frameExtractor.HardwareAccelerator = null;
+            return;
+        }
+        if (_ffmpeg.FfmpegPath is not { } ffmpeg) return;
+
+        // Fire and forget: the preview keeps working on the CPU meanwhile.
+        _ = DetectDecoderAsync(ffmpeg);
+    }
+
+    private async Task DetectDecoderAsync(string ffmpegPath)
+    {
+        try
+        {
+            var accelerator = await HardwareDecoders.DetectAsync(ffmpegPath);
+            if (!Settings.UseHardwareDecoder) return; // toggled off while probing
+            _frameExtractor.HardwareAccelerator = accelerator;
+            StatusText = accelerator is null
+                ? "No working GPU decoder found — preview frames decode on the CPU."
+                : $"GPU decoding enabled for preview frames ({accelerator}).";
+        }
+        catch
+        {
+            _frameExtractor.HardwareAccelerator = null; // never break decoding over this
+        }
+    }
+
+    /// <summary>
+    /// Runs the developer performance probe against the current project and
+    /// writes the report to user/logs. Returns the file path so the caller can
+    /// offer to open it.
+    /// </summary>
+    public async Task<string> RunPerformanceTestAsync(
+        IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        var project = _projects.Current;
+        var (width, height) = FrameSizes.FitWithin(
+            project.Settings.Width, project.Settings.Height, Preview.PreviewWidth);
+
+        var probe = new PerformanceProbe(_ffmpeg, _compositor, _effectPipeline);
+        var report = await probe.RunAsync(
+            project, width, height, project.Settings.FrameRate, progress, cancellationToken);
+
+        var folder = Path.Combine(CachePaths.LocateAppRoot(), "user", "logs");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, $"performance-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        await File.WriteAllTextAsync(path, report, cancellationToken);
+        return path;
     }
 
     // ---------- One-click FFmpeg install ----------
@@ -301,7 +376,11 @@ public class MainViewModel : ObservableObject
     /// PreviewViewModel coalesces the requests, so calling this on every
     /// mouse move is cheap.
     /// </summary>
-    public void RequestPreviewRefresh() => Preview.RequestRender();
+    /// <summary>
+    /// Re-renders the preview after a model change. Unlike a plain seek this
+    /// tells the preview the timeline itself moved, so cached decoders are dropped.
+    /// </summary>
+    public void RequestPreviewRefresh() => Preview.RequestRender(modelChanged: true);
 
     /// <summary>
     /// Drag-selection on an empty lane: sets the yellow range live (no undo
@@ -1519,7 +1598,7 @@ public class MainViewModel : ObservableObject
     {
         var settings = _projects.Current.Settings;
         var (width, height) = FrameSizes.FitWithin(
-            settings.Width, settings.Height, PreviewViewModel.MaxPreviewWidth);
+            settings.Width, settings.Height, Preview.PreviewWidth);
         _textRasterizer.EnsureRendered(style, width, height, settings.Width);
     }
 

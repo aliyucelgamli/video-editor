@@ -10,7 +10,8 @@ namespace VideoEditor.MediaEngine.Frames;
 /// video event keeps ONE streaming ffmpeg decoder alive and reads the next
 /// frame from it, instead of spawning a seek+decode process per frame
 /// (100+ ms each). Still images are decoded once and reused. This is what
-/// turns a minutes-long export into seconds.
+/// turns a minutes-long export into seconds — and, since playback uses it too
+/// whenever layers overlap, what keeps the preview watchable.
 /// </summary>
 public sealed class SequentialCompositor : IDisposable
 {
@@ -33,7 +34,8 @@ public sealed class SequentialCompositor : IDisposable
     /// </summary>
     public async Task RenderAsync(
         Project project, double time, long frameIndex, double fps,
-        byte[] canvas, int width, int height, CancellationToken cancellationToken)
+        byte[] canvas, int width, int height, CancellationToken cancellationToken,
+        EffectPreview? preview = null)
     {
         FrameCompositor.FillBlack(canvas);
 
@@ -56,7 +58,7 @@ public sealed class SequentialCompositor : IDisposable
             }
             if (layer is null) continue;
 
-            _compositor.BlendLayerOnto(canvas, layer, width, height, track, evt, time, project);
+            _compositor.BlendLayerOnto(canvas, layer, width, height, track, evt, time, project, preview);
         }
 
         ReleaseFinishedSources(time);

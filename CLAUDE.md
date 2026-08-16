@@ -50,7 +50,7 @@ development/
     App/           WPF (MVVM). ViewModels + Services (TimelineVisualsService,
                    MediaEnrichmentService) + XAML. No FFmpeg calls in views/viewmodels —
                    always go through MediaEngine services.
-  tests/Tests/     Zero-dependency test suite (46 tests). Run: test.bat / dotnet run.
+  tests/Tests/     Zero-dependency test suite (83 tests). Run: test.bat / dotnet run.
 examples/          Tiny test assets (1080p clips, 64×64 images) for drag & drop testing.
 user/              User-editable assets (effects/*.vefx, templates, fonts, exports…).
                    NEVER deleted by updates.
@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 20)
+## Feature state (2026-08-16, round 22)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -171,9 +171,29 @@ This also fixed titles rendering *behind* the footage; lanes reorder by dragging
 header (`MoveTrackCommand`), the Layers window can add lanes, and a dropped asset always
 lands on a lane of its own kind (one is created when the project has none). Preview
 renders are debounced in one place, so scrubbing no longer spawns an ffmpeg process per
-mouse move; clicking the timeline during playback pauses it on that frame; the preview
-composes at 960 px with high-quality scaling and ideal text formatting, so titles are
-crisp. run.bat build-first flow. 78 tests green.
+mouse move; clicking the timeline during playback pauses it on that frame.
+**Playback performance**: overlapping layers (text over video, crossfades) now play
+through `SequentialCompositor` — one long-lived decoder per event instead of a
+seek+decode process per layer per frame, measured ~16x faster; the pixel loops
+(FillBlack/BlendOnto/ApplyOpacity/FlattenOnBlack/ApplyTransform) work 32 bits at a
+time in fixed point; the preview monitor drops to LowQuality bitmap scaling while
+playing and returns to HighQuality when paused; **preview quality is a setting**
+(`Application/Settings/PreviewQuality`: Draft 480 / Normal 640 / High 960, default
+Normal) because canvas width is the biggest playback lever. **Developer performance
+probe** (`MediaEngine/Diagnostics/PerformanceProbe`, Settings > Diagnostics > Run
+performance test): machine + GPU + ffmpeg hwaccels, which render path the project
+forces, per-operation pixel timings, decode/compose/scrub ms per frame and a verdict,
+written to `user/logs/performance-*.txt` for sharing. Dark `ComboBox` styling app-wide.
+**Scrub performance** (round 22, driven by a real report): `FrameCompositor.ComposeAsync`
+decodes its layers concurrently instead of one after another; `ScrubRenderer` primes
+sequential decoders just past every cold frame in the background, so continuing a drag
+forward reads them instead of seeking again (measured ~4-5x, and it is the same
+decoders playback uses at ~3 ms/frame); single-frame decodes skip audio/subtitle/data
+streams; the frame cache is bounded by bytes (64 MB) rather than entries;
+`HardwareDecoders` detects and *verifies* a GPU decoder (cuda/d3d11va/qsv/dxva2 — a
+listed one can still fail, and ffmpeg silently falls back, so a silent stderr is part
+of the check) behind an off-by-default Settings toggle, with the report timing cold
+scrub both ways. run.bat build-first flow. 83 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;
@@ -205,6 +225,9 @@ Based on the Microsoft C# coding conventions, adapted to this codebase:
   modifier-less letters \u2014 build key bindings with property initializers instead;
   an element may not carry both a `Style="..."` attribute and a `<Tag.Style>` block
   (MC3024) \u2014 put `BasedOn` on the block instead.
+- Pixel loops: BGRA buffers are cast to `uint` spans so a pixel moves in one 32-bit
+  operation. `MemoryMarshal.Cast<byte, uint>(array)` binds to the ReadOnlySpan overload
+  and the result is not writable \u2014 pass `array.AsSpan()` to get a `Span<uint>`.
 - Warnings are errors in spirit: the build must be warning-clean. Un-awaited calls that
   are intentionally fire-and-forget use `_ =` discards with a short comment.
 

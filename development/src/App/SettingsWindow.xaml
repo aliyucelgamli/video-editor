@@ -32,6 +32,35 @@
                   Content="Warn about unsaved changes when closing the app"
                   ToolTip="Off by default. New Project and Open always ask, whatever this is set to."/>
 
+        <TextBlock Text="PLAYBACK" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
+        <TextBlock Text="Preview quality" FontSize="11" Margin="0,8,0,3"
+                   Foreground="{StaticResource SubtleTextBrush}"/>
+        <ComboBox x:Name="PreviewQualityBox"
+                  ToolTip="Only affects the preview monitor — export always renders at full project resolution"/>
+        <TextBlock x:Name="PreviewQualityHint" FontSize="10" Margin="0,4,0,0"
+                   TextWrapping="Wrap" Foreground="#FF5A616E"/>
+
+        <CheckBox x:Name="GpuDecodeCheck" Style="{StaticResource FlatCheckBox}" Margin="0,12,0,0"
+                  Content="Decode preview frames on the GPU (experimental)"
+                  ToolTip="Only affects seeking to a new frame. Run the performance test below to see whether it is faster on this machine."/>
+
+        <TextBlock Text="DIAGNOSTICS" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
+        <TextBlock Text="Measures where playback time goes on this machine and writes a report you can share."
+                   FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap"
+                   Foreground="#FF5A616E"/>
+        <DockPanel Margin="0,8,0,0">
+            <Button x:Name="PerfTestButton" DockPanel.Dock="Left" Style="{StaticResource ToolButton}"
+                    Padding="12,6" Click="RunPerformanceTest_Click">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE9D9;"/>
+                    <TextBlock Text="Run performance test" Margin="6,0,0,0"/>
+                </StackPanel>
+            </Button>
+            <TextBlock x:Name="PerfStatus" Margin="10,0,0,0" VerticalAlignment="Center"
+                       FontSize="10" TextTrimming="CharacterEllipsis"
+                       Foreground="{StaticResource SubtleTextBrush}"/>
+        </DockPanel>
+
         <TextBlock Text="KEYBOARD" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
         <Button Style="{StaticResource ToolButton}" Padding="12,6" Margin="0,8,0,0"
                 HorizontalAlignment="Left" Click="OpenShortcuts_Click">

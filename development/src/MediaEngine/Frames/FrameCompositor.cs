@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Effects;
 
@@ -39,36 +40,53 @@ public class FrameCompositor
         var canvas = new byte[width * height * 4];
         FillBlack(canvas);
 
-        // Back to front: the lowest effective layer is painted first.
-        foreach (var (track, evt) in EnumerateVisibleLayers(project, time))
+        var layers = EnumerateVisibleLayers(project, time);
+
+        // Every source is decoded in its own ffmpeg process, so the layers are
+        // fetched CONCURRENTLY: the wait is the slowest single decode instead
+        // of the sum of all of them. Blending stays strictly back to front.
+        var sources = new Task<byte[]?>[layers.Count];
+        for (var i = 0; i < layers.Count; i++)
+            sources[i] = AcquireLayerAsync(project, layers[i], time, width, height, cancellationToken);
+
+        var decoded = await Task.WhenAll(sources).ConfigureAwait(false);
+
+        for (var i = 0; i < layers.Count; i++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] layer;
-            if (evt.Text is { } textStyle)
-            {
-                // Rasterized by the UI; a private copy because effects mutate.
-                var raster = TextRasters.TryGetShared(textStyle, width, height);
-                if (raster is null) continue;
-                layer = (byte[])raster.Bgra.Clone();
-            }
-            else
-            {
-                var media = project.Media.FindById(evt.MediaId);
-                if (media is null || media.Type == MediaType.Audio) continue;
-
-                var sourceTime = evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
-                var frame = await _extractor
-                    .GetFrameAsync(media.FilePath, media.Type == MediaType.Image ? 0 : sourceTime, width, height, cancellationToken)
-                    .ConfigureAwait(false);
-                if (frame is null) continue;
-                layer = frame.Bgra;
-            }
-
+            if (decoded[i] is not { } layer) continue;
+            var (track, evt) = layers[i];
             BlendLayerOnto(canvas, layer, width, height, track, evt, time, project, preview);
         }
 
         return new RawFrame(canvas, width, height);
+    }
+
+    /// <summary>
+    /// Source pixels for one layer, ready to be mutated by the caller (effects
+    /// run in place). Null when the layer contributes nothing at this time.
+    /// </summary>
+    private async Task<byte[]?> AcquireLayerAsync(
+        Project project, LayerEntry entry, double time, int width, int height,
+        CancellationToken cancellationToken)
+    {
+        var evt = entry.Event;
+        if (evt.Text is { } textStyle)
+        {
+            // Rasterized by the UI; a private copy because effects mutate.
+            var raster = TextRasters.TryGetShared(textStyle, width, height);
+            return raster is null ? null : (byte[])raster.Bgra.Clone();
+        }
+
+        var media = project.Media.FindById(evt.MediaId);
+        if (media is null || media.Type == MediaType.Audio) return null;
+
+        var sourceTime = media.Type == MediaType.Image
+            ? 0
+            : evt.SourceIn + (time - evt.Start) * evt.PlaybackRate;
+        var frame = await _extractor
+            .GetFrameAsync(media.FilePath, sourceTime, width, height, cancellationToken)
+            .ConfigureAwait(false);
+        return frame?.Bgra;
     }
 
     /// <summary>
@@ -154,6 +172,9 @@ public class FrameCompositor
         }
 
         var result = new byte[bgra.Length]; // all-transparent
+        var source = MemoryMarshal.Cast<byte, uint>(bgra.AsSpan());
+        var destination = MemoryMarshal.Cast<byte, uint>(result.AsSpan());
+
         for (var y = 0; y < height; y++)
         {
             // Inverse mapping: destination pixel → source pixel.
@@ -166,13 +187,7 @@ public class FrameCompositor
             {
                 var sourceX = columnMap[x];
                 if (sourceX < 0) continue;
-
-                var from = (sourceRow + sourceX) * 4;
-                var to = (destinationRow + x) * 4;
-                result[to] = bgra[from];
-                result[to + 1] = bgra[from + 1];
-                result[to + 2] = bgra[from + 2];
-                result[to + 3] = bgra[from + 3];
+                destination[destinationRow + x] = source[sourceRow + sourceX]; // whole pixel at once
             }
         }
         return result;
@@ -181,28 +196,49 @@ public class FrameCompositor
     /// <summary>Flattens transparency onto black (single-layer playback fast path).</summary>
     public static void FlattenOnBlack(byte[] bgra)
     {
-        for (var i = 0; i < bgra.Length; i += 4)
+        var pixels = MemoryMarshal.Cast<byte, uint>(bgra.AsSpan());
+        for (var p = 0; p < pixels.Length; p++)
         {
-            var alpha = bgra[i + 3];
-            if (alpha == 255) continue;
-            bgra[i] = (byte)(bgra[i] * alpha / 255);
-            bgra[i + 1] = (byte)(bgra[i + 1] * alpha / 255);
-            bgra[i + 2] = (byte)(bgra[i + 2] * alpha / 255);
-            bgra[i + 3] = 255;
+            var pixel = pixels[p];
+            var alpha = (int)(pixel >> 24);
+            if (alpha == 255) continue;      // already opaque — the common case
+            if (alpha == 0) { pixels[p] = OpaqueBlack; continue; }
+
+            var blue = (int)(pixel & 0xFF) * alpha / 255;
+            var green = (int)((pixel >> 8) & 0xFF) * alpha / 255;
+            var red = (int)((pixel >> 16) & 0xFF) * alpha / 255;
+            pixels[p] = OpaqueBlack | (uint)(red << 16) | (uint)(green << 8) | (uint)blue;
         }
     }
 
-    /// <summary>Multiplies a frame toward black (event/track opacity + fades).</summary>
+    /// <summary>
+    /// Multiplies a frame toward black (event/track opacity + fades). Fixed
+    /// point: one integer multiply and shift per channel instead of a
+    /// double multiply, which matters at ~1M channels per frame.
+    /// </summary>
     public static void ApplyOpacity(byte[] bgra, double opacity)
     {
         opacity = Math.Clamp(opacity, 0, 1);
         if (opacity >= 0.999) return;
 
+        if (opacity <= 0.0005)
+        {
+            // Fully faded: black out colour, keep alpha.
+            for (var i = 0; i < bgra.Length; i += 4)
+            {
+                bgra[i] = 0;
+                bgra[i + 1] = 0;
+                bgra[i + 2] = 0;
+            }
+            return;
+        }
+
+        var scale = (int)(opacity * 65536);
         for (var i = 0; i < bgra.Length; i += 4)
         {
-            bgra[i] = (byte)(bgra[i] * opacity);
-            bgra[i + 1] = (byte)(bgra[i + 1] * opacity);
-            bgra[i + 2] = (byte)(bgra[i + 2] * opacity);
+            bgra[i] = (byte)(bgra[i] * scale >> 16);
+            bgra[i + 1] = (byte)(bgra[i + 1] * scale >> 16);
+            bgra[i + 2] = (byte)(bgra[i + 2] * scale >> 16);
         }
     }
 
@@ -273,42 +309,58 @@ public class FrameCompositor
     public static IEnumerable<Track> EnumerateVisualTracks(Project project) =>
         project.Tracks.Where(t => t.Type is TrackType.Video or TrackType.Overlay);
 
-    /// <summary>Resets a canvas to opaque black.</summary>
-    public static void FillBlack(byte[] canvas)
-    {
-        Array.Clear(canvas);
-        for (var i = 3; i < canvas.Length; i += 4) canvas[i] = 255;
-    }
+    /// <summary>
+    /// Resets a canvas to opaque black. One 32-bit store per pixel — four times
+    /// fewer writes than clearing bytes and then patching the alpha channel.
+    /// </summary>
+    public static void FillBlack(byte[] canvas) =>
+        MemoryMarshal.Cast<byte, uint>(canvas.AsSpan()).Fill(OpaqueBlack);
 
-    /// <summary>Alpha-blends a layer onto the canvas at the given opacity.</summary>
+    /// <summary>BGRA little-endian: alpha 255, colour 0.</summary>
+    private const uint OpaqueBlack = 0xFF000000u;
+
+    /// <summary>
+    /// Alpha-blends a layer onto the canvas at the given opacity. Works a
+    /// pixel (32 bits) at a time in fixed point: the fully-opaque case becomes
+    /// a single store, and the blended case avoids floating point entirely.
+    /// </summary>
     public static void BlendOnto(byte[] canvas, byte[] layer, double opacity)
     {
         opacity = Math.Clamp(opacity, 0, 1);
         if (opacity <= 0) return;
 
-        var fullOpacity = opacity >= 1.0;
-        for (var i = 0; i < canvas.Length; i += 4)
-        {
-            var layerAlpha = layer[i + 3];
-            if (layerAlpha == 0) continue;
+        var canvasPixels = MemoryMarshal.Cast<byte, uint>(canvas.AsSpan());
+        var layerPixels = MemoryMarshal.Cast<byte, uint>(layer.AsSpan());
+        var count = Math.Min(canvasPixels.Length, layerPixels.Length);
+        var layerOpacity = (int)Math.Round(opacity * 255);
 
-            // Fully opaque pixel at full opacity → straight copy (the blend
-            // below would produce exactly this, just slower).
-            if (fullOpacity && layerAlpha == 255)
+        for (var p = 0; p < count; p++)
+        {
+            var source = layerPixels[p];
+            int alpha = (int)(source >> 24);
+            if (alpha == 0) continue; // fully transparent source pixel
+
+            // Combine the layer's own alpha (transparent PNGs, text) with the
+            // event/track opacity into a single 0..255 weight.
+            if (layerOpacity < 255) alpha = alpha * layerOpacity / 255;
+
+            if (alpha >= 255)
             {
-                canvas[i] = layer[i];
-                canvas[i + 1] = layer[i + 1];
-                canvas[i + 2] = layer[i + 2];
-                canvas[i + 3] = 255;
+                canvasPixels[p] = source | OpaqueBlack; // opaque → straight copy
                 continue;
             }
+            if (alpha == 0) continue;
 
-            // Combine the layer's own alpha (transparent PNGs) with event opacity.
-            var alpha = opacity * layerAlpha / 255.0;
-            canvas[i] = (byte)(canvas[i] + (layer[i] - canvas[i]) * alpha);
-            canvas[i + 1] = (byte)(canvas[i + 1] + (layer[i + 1] - canvas[i + 1]) * alpha);
-            canvas[i + 2] = (byte)(canvas[i + 2] + (layer[i + 2] - canvas[i + 2]) * alpha);
-            canvas[i + 3] = 255;
+            var destination = canvasPixels[p];
+            var blue = (int)(destination & 0xFF);
+            var green = (int)((destination >> 8) & 0xFF);
+            var red = (int)((destination >> 16) & 0xFF);
+
+            blue += ((int)(source & 0xFF) - blue) * alpha / 255;
+            green += ((int)((source >> 8) & 0xFF) - green) * alpha / 255;
+            red += ((int)((source >> 16) & 0xFF) - red) * alpha / 255;
+
+            canvasPixels[p] = OpaqueBlack | (uint)(red << 16) | (uint)(green << 8) | (uint)blue;
         }
     }
 }

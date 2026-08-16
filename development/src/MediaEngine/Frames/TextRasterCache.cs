@@ -30,4 +30,13 @@ public class TextRasterCache
         if (_frames.Count >= MaxEntries) _frames.Clear(); // crude but safe bound
         _frames[KeyFor(style, width, height)] = frame;
     }
+
+    /// <summary>Drops every raster — used when the preview size changes.</summary>
+    public void Clear() => _frames.Clear();
+
+    /// <summary>Key/raster pairs, for handing warm rasters to a second compositor.</summary>
+    public IEnumerable<KeyValuePair<string, RawFrame>> Snapshot() => _frames.ToArray();
+
+    /// <summary>Stores a raster under a key produced by <see cref="KeyFor"/>.</summary>
+    public void StoreRaw(string key, RawFrame frame) => _frames[key] = frame;
 }

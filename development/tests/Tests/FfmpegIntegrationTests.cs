@@ -174,6 +174,58 @@ public static class FfmpegIntegrationTests
             Assert.True(presented >= 5, $"frames were presented continuously (got {presented})");
         }
 
+        // 8b) Overlapping layers must play through the sequential renderer, not
+        //     one seek+decode per layer per frame. Measured directly: a run of
+        //     consecutive frames has to be far cheaper than the same frames
+        //     composed independently, or preview playback stutters again.
+        {
+            var overlayTrack = new Track { Name = "V2", Type = TrackType.Overlay };
+            overlayTrack.Events.Add(new TimelineEvent
+            {
+                MediaId = media.Id, Start = 0, Duration = 2, SourceOut = 2, Opacity = 0.5
+            });
+            project.Tracks.Add(overlayTrack);
+
+            Assert.True(FrameCompositor.FindSingleVisualLayer(project, 0.5) is null,
+                "two visual layers force the overlap path");
+
+            const int frames = 6;
+            var canvas = new byte[320 * 180 * 4];
+            using (var sequential = new SequentialCompositor(locator, compositor))
+            {
+                // Frame 0 starts the decoders; playback pays that once per run.
+                await sequential.RenderAsync(project, 0.5, 0, 24, canvas, 320, 180, CancellationToken.None);
+
+                var sequentialTimer = System.Diagnostics.Stopwatch.StartNew();
+                for (var i = 1; i <= frames; i++)
+                    await sequential.RenderAsync(
+                        project, 0.5 + i / 24.0, i, 24, canvas, 320, 180, CancellationToken.None);
+                sequentialTimer.Stop();
+
+                var perFrameTimer = System.Diagnostics.Stopwatch.StartNew();
+                for (var i = 1; i <= frames; i++)
+                    await compositor.ComposeAsync(project, 0.5 + i / 24.0, 320, 180);
+                perFrameTimer.Stop();
+
+                Assert.True(sequentialTimer.ElapsedMilliseconds * 2 < perFrameTimer.ElapsedMilliseconds,
+                    $"sequential overlap rendering beats per-frame composition " +
+                    $"({sequentialTimer.ElapsedMilliseconds} ms vs {perFrameTimer.ElapsedMilliseconds} ms for {frames} frames)");
+            }
+
+            // And the engine keeps presenting while the layers overlap.
+            var overlapEngine = new VideoEditor.MediaEngine.Playback.PlaybackEngine(
+                compositor, new FrameExtractor(locator), new VideoEffectPipeline(catalog), locator);
+            var overlapFrames = 0;
+            await overlapEngine.RunAsync(project, origin: 0, duration: 1.0, width: 320, height: 180, fps: 24,
+                onTime: _ => { },
+                present: (_, _, _) => overlapFrames++,
+                CancellationToken.None);
+            Assert.True(overlapFrames >= 5,
+                $"overlapping layers still present frames continuously (got {overlapFrames})");
+
+            project.Tracks.Remove(overlayTrack);
+        }
+
         // 9) Export the yellow-range selection [0.5, 1.5) and verify the result.
         project.ExportRange = new TimeRange { Start = 0.5, End = 1.5 };
         var output = Path.Combine(workDir, "out.mp4");

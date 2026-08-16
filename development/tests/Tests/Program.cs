@@ -21,6 +21,7 @@ public static class Program
         LayerTests.Register();
         TrackOrderTests.Register();
         MediaEngineTests.Register();
+        DiagnosticsTests.Register();
         FfmpegIntegrationTests.Register();
 
         return TestRunner.RunAll();
