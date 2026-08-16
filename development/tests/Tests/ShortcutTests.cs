@@ -22,6 +22,18 @@ public static class ShortcutTests
                 groups.Count, "each category appears once");
             Assert.Equal(EditorActions.All.Count, groups.Sum(g => g.Actions.Count),
                 "grouping loses no actions");
+
+            // No two actions may claim the same default gesture, or one of them
+            // silently never fires once the bindings are built.
+            var defaults = EditorActions.All
+                .SelectMany(a => a.DefaultGestures.Select(g => (Action: a.Id, Gesture: g)))
+                .ToList();
+            var clashes = defaults
+                .GroupBy(d => d.Gesture, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .Select(g => $"{g.Key} → {string.Join(", ", g.Select(d => d.Action))}")
+                .ToList();
+            Assert.True(clashes.Count == 0, "no duplicate default gestures: " + string.Join(" | ", clashes));
         });
 
         TestRunner.Add("Shortcuts: defaults, override, conflict steal and reset", () =>

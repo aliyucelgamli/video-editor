@@ -107,7 +107,6 @@ public class MainViewModel : ObservableObject
             _compositor, _frameExtractor, _effectPipeline, _ffmpeg, () => _projects.Current, previewAudio,
             effectPreview: BuildEffectPreview);
         Preview.PreviewWidth = Settings.PreviewWidth;
-        ApplyDecoderSetting();
         Preview.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PreviewViewModel.PlayheadTime))
@@ -129,6 +128,9 @@ public class MainViewModel : ObservableObject
         UndoCommand = new RelayCommand(() => _undoRedo.Undo(), () => _undoRedo.CanUndo);
         RedoCommand = new RelayCommand(() => _undoRedo.Redo(), () => _undoRedo.CanRedo);
         DeleteSelectedCommand = new RelayCommand(DeleteSelected, () => _selectedEventId is not null);
+        CopyCommand = new RelayCommand(CopySelected, () => _selectedEventId is not null);
+        PasteCommand = new RelayCommand(PasteClipboard, () => CanPaste);
+        DuplicateCommand = new RelayCommand(DuplicateSelected, () => _selectedEventId is not null);
         ZoomInCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 1.25));
         ZoomOutCommand = new RelayCommand(() => ZoomRequested?.Invoke(this, 0.8));
         PlayPauseCommand = new RelayCommand(() => Preview.TogglePlay());
@@ -182,40 +184,6 @@ public class MainViewModel : ObservableObject
         _textRasters.Clear();
         RasterizeAllTextEvents();
         RequestPreviewRefresh();
-    }
-
-    /// <summary>
-    /// Turns GPU frame decoding on or off. Detection runs in the background and
-    /// verifies the accelerator really works; until then decoding stays on the CPU.
-    /// </summary>
-    public void ApplyDecoderSetting()
-    {
-        if (!Settings.UseHardwareDecoder)
-        {
-            _frameExtractor.HardwareAccelerator = null;
-            return;
-        }
-        if (_ffmpeg.FfmpegPath is not { } ffmpeg) return;
-
-        // Fire and forget: the preview keeps working on the CPU meanwhile.
-        _ = DetectDecoderAsync(ffmpeg);
-    }
-
-    private async Task DetectDecoderAsync(string ffmpegPath)
-    {
-        try
-        {
-            var accelerator = await HardwareDecoders.DetectAsync(ffmpegPath);
-            if (!Settings.UseHardwareDecoder) return; // toggled off while probing
-            _frameExtractor.HardwareAccelerator = accelerator;
-            StatusText = accelerator is null
-                ? "No working GPU decoder found — preview frames decode on the CPU."
-                : $"GPU decoding enabled for preview frames ({accelerator}).";
-        }
-        catch
-        {
-            _frameExtractor.HardwareAccelerator = null; // never break decoding over this
-        }
     }
 
     /// <summary>
@@ -304,6 +272,10 @@ public class MainViewModel : ObservableObject
     public ObservableCollection<TrackViewModel> Tracks { get; } = new();
     public ObservableCollection<MediaItemViewModel> MediaItems { get; } = new();
     public ObservableCollection<RulerTickViewModel> RulerTicks { get; } = new();
+
+    public RelayCommand CopyCommand { get; }
+    public RelayCommand PasteCommand { get; }
+    public RelayCommand DuplicateCommand { get; }
 
     public RelayCommand NewProjectCommand { get; }
     public RelayCommand OpenCommand { get; }
@@ -630,14 +602,29 @@ public class MainViewModel : ObservableObject
 
         if (!isExit)
         {
-            return _dialogs.Confirm(
-                "Unsaved Changes",
-                "This project has changes that have not been saved.",
-                confirmText: "Discard",
-                cancelText: "Keep Editing",
-                details: "Continuing discards them.",
-                tone: DialogTone.Warning,
-                destructive: true);
+            // Saving first is offered here too: losing work to a New/Open/drop
+            // is the same loss as losing it to a close.
+            var choice = _dialogs.Show(new DialogOptions
+            {
+                Title = "Unsaved Changes",
+                Message = "This project has changes that have not been saved.",
+                Details = "Continuing without saving discards them.",
+                Tone = DialogTone.Warning,
+                Buttons = new[]
+                {
+                    new DialogButton("Keep Editing", "cancel"),
+                    new DialogButton("Discard", "discard", IsDestructive: true),
+                    new DialogButton("Save First", "save", IsPrimary: true)
+                },
+                DismissResult = "cancel"
+            });
+
+            return choice switch
+            {
+                "save" => SaveBeforeExit(),
+                "discard" => true,
+                _ => false
+            };
         }
 
         // Closing: saving first is what most people want, so it leads.
@@ -695,11 +682,28 @@ public class MainViewModel : ObservableObject
         if (!ConfirmDiscardChanges()) return;
         var dialog = new OpenFileDialog { Filter = ProjectFileFilter };
         if (dialog.ShowDialog() != true) return;
+        OpenProjectFile(dialog.FileName, alreadyConfirmed: true);
+    }
+
+    /// <summary>The project file extension, without the dot.</summary>
+    public const string ProjectExtension = ".veproj";
+
+    /// <summary>True when the path looks like a project file (drag &amp; drop routing).</summary>
+    public static bool IsProjectFile(string path) =>
+        Path.GetExtension(path).Equals(ProjectExtension, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Opens a project by path — the drop target for .veproj files. Unsaved work
+    /// is guarded first; an untouched project opens the file with no questions.
+    /// </summary>
+    public void OpenProjectFile(string path, bool alreadyConfirmed = false)
+    {
+        if (!alreadyConfirmed && !ConfirmDiscardChanges()) return;
 
         try
         {
-            _projects.Open(dialog.FileName);
-            StatusText = $"Opened {Path.GetFileName(dialog.FileName)}";
+            _projects.Open(path); // ProjectChanged rebuilds the timeline
+            StatusText = $"Opened {Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
@@ -828,11 +832,9 @@ public class MainViewModel : ObservableObject
 
     // ---------- Timeline drag & drop ----------
 
-    public static bool IsCompatible(MediaType media, TrackType track) => track switch
-    {
-        TrackType.Audio => media == MediaType.Audio,
-        _ => media is MediaType.Video or MediaType.Image
-    };
+    /// <summary>Lane compatibility lives in <see cref="TrackRouting"/> — this is the local name for it.</summary>
+    public static bool IsCompatible(MediaType media, TrackType track) =>
+        TrackRouting.Accepts(media, track);
 
     public bool CanDropMediaOnTrack(Guid mediaId, Guid trackId)
     {
@@ -860,7 +862,7 @@ public class MainViewModel : ObservableObject
         if (_projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type)) is { } existing)
             return existing;
 
-        AddTrack(media.Type == MediaType.Audio ? TrackType.Audio : TrackType.Video);
+        AddTrack(TrackRouting.LaneKindFor(media.Type));
         return _projects.Current.Tracks.FirstOrDefault(t => IsCompatible(media.Type, t.Type));
     }
 
@@ -1117,15 +1119,23 @@ public class MainViewModel : ObservableObject
         return Math.Max(0, best);
     }
 
-    /// <summary>Moves an event (and its linked partner) to a new start — one undo step.</summary>
-    public void MoveEvent(Guid eventId, double newStart)
+    /// <summary>
+    /// Moves an event (and its linked partner) to a new start, optionally onto
+    /// another lane — one undo step. The linked partner keeps its own lane and
+    /// only follows in time, so dragging a video between visual lanes never
+    /// drags its audio out of the audio lane.
+    /// </summary>
+    public void MoveEvent(Guid eventId, double newStart, Guid? targetTrackId = null)
     {
         if (_projects.Current.FindEvent(eventId) is not { } found) return;
         var (track, evt) = found;
         newStart = Math.Max(0, newStart);
-        if (Math.Abs(newStart - evt.Start) < 0.0005) return;
 
-        var commands = new List<IEditorCommand> { new MoveEventCommand(evt, track, track, newStart) };
+        var target = ResolveMoveTarget(evt, track, targetTrackId);
+        var laneChanged = !ReferenceEquals(target, track);
+        if (!laneChanged && Math.Abs(newStart - evt.Start) < 0.0005) return;
+
+        var commands = new List<IEditorCommand> { new MoveEventCommand(evt, track, target, newStart) };
 
         if (evt.LinkedEventId is Guid linkedId &&
             _projects.Current.FindEvent(linkedId) is { } linked)
@@ -1139,7 +1149,41 @@ public class MainViewModel : ObservableObject
         _undoRedo.ExecuteCommand(commands.Count == 1
             ? commands[0]
             : new CompositeCommand($"Move '{evt.Name}'", commands));
-        StatusText = $"Moved '{evt.Name}' to {FormatTime(newStart)}";
+        StatusText = laneChanged
+            ? $"Moved '{evt.Name}' to {target.Name} at {FormatTime(newStart)}"
+            : $"Moved '{evt.Name}' to {FormatTime(newStart)}";
+    }
+
+    /// <summary>The lane a move should really land on — the current one when the ask is invalid.</summary>
+    private Track ResolveMoveTarget(TimelineEvent evt, Track currentTrack, Guid? targetTrackId)
+    {
+        if (targetTrackId is not { } id || id == currentTrack.Id) return currentTrack;
+        var target = _projects.Current.Tracks.FirstOrDefault(t => t.Id == id);
+        return target != null && AcceptsEvent(target, evt) ? target : currentTrack;
+    }
+
+    /// <summary>
+    /// True when a lane can hold this clip: titles and visuals belong on video
+    /// or overlay lanes, sound on audio lanes. Same rule as media drops, but
+    /// asked about a clip that already exists.
+    /// </summary>
+    public bool AcceptsEvent(Track track, TimelineEvent evt) =>
+        TrackRouting.Accepts(_projects.Current, track, evt);
+
+    /// <summary>Lane index the clip currently sits on, or -1.</summary>
+    public int IndexOfTrackForEvent(Guid eventId) =>
+        _projects.Current.Tracks.FindIndex(t => t.Events.Any(e => e.Id == eventId));
+
+    /// <summary>
+    /// The lane at <paramref name="index"/> if it can hold the clip, else null —
+    /// what a vertical drag asks before showing its drop feedback.
+    /// </summary>
+    public Guid? DropTargetTrackFor(Guid eventId, int index)
+    {
+        var tracks = _projects.Current.Tracks;
+        if (index < 0 || index >= tracks.Count) return null;
+        if (_projects.Current.FindEvent(eventId) is not { } found) return null;
+        return AcceptsEvent(tracks[index], found.Event) ? tracks[index].Id : null;
     }
 
     /// <summary>
@@ -1256,6 +1300,136 @@ public class MainViewModel : ObservableObject
             ? commands[0]
             : new CompositeCommand($"Delete '{found.Event.Name}'", commands));
         StatusText = $"Deleted '{found.Event.Name}'";
+    }
+
+    // ---------- Copy / paste / duplicate ----------
+
+    /// <summary>
+    /// The copied clip, kept in the app rather than the Windows clipboard: a
+    /// clip is a reference into this project's media plus its edit state, which
+    /// means nothing to any other program. A copied A/V pair is kept together.
+    /// </summary>
+    private List<TimelineEvent>? _clipboard;
+    private string _clipboardName = string.Empty;
+
+    public bool CanPaste => _clipboard is { Count: > 0 };
+
+    /// <summary>Ctrl+C — takes an independent snapshot, so later edits to the original do not follow.</summary>
+    public void CopySelected()
+    {
+        if (GetSelectedContext() is not { } found)
+        {
+            StatusText = "Select a clip to copy";
+            return;
+        }
+
+        // Starts are stored relative to the copied clip, so pasting is just
+        // "add the paste position" wherever it lands.
+        var primary = found.Event.Clone();
+        primary.Start = 0;
+        var copies = new List<TimelineEvent> { primary };
+
+        if (found.Event.LinkedEventId is Guid linkedId &&
+            _projects.Current.FindEvent(linkedId) is { } linked)
+        {
+            var partner = linked.Event.Clone();
+            partner.Start = linked.Event.Start - found.Event.Start;
+            copies.Add(partner);
+        }
+
+        _clipboard = copies;
+        _clipboardName = found.Event.Name;
+        OnPropertyChanged(nameof(CanPaste));
+        CommandManager.InvalidateRequerySuggested();
+        StatusText = $"Copied '{found.Event.Name}'";
+    }
+
+    /// <summary>Ctrl+V — drops the copy at the playhead, on a lane that can hold it.</summary>
+    public void PasteClipboard()
+    {
+        if (_clipboard is not { Count: > 0 } clipboard) return;
+        PasteAt(clipboard, Preview.PlayheadTime, $"Pasted '{_clipboardName}'");
+    }
+
+    /// <summary>
+    /// Ctrl+D — copy and paste in one step, landing right after the original so
+    /// repeated presses lay clips end to end.
+    /// </summary>
+    public void DuplicateSelected()
+    {
+        if (GetSelectedContext() is not { } found)
+        {
+            StatusText = "Select a clip to duplicate";
+            return;
+        }
+
+        CopySelected();
+        if (_clipboard is { Count: > 0 } clipboard)
+            PasteAt(clipboard, found.Event.End, $"Duplicated '{found.Event.Name}'");
+    }
+
+    /// <summary>
+    /// Places clipboard clips starting at <paramref name="start"/>. The lane is
+    /// the one the copy came from when it still fits, otherwise the first that
+    /// accepts it — the same routing a media drop uses.
+    /// </summary>
+    private void PasteAt(IReadOnlyList<TimelineEvent> clipboard, double start, string status)
+    {
+        var commands = new List<IEditorCommand>();
+        var pasted = new List<TimelineEvent>();
+
+        foreach (var source in clipboard)
+        {
+            var copy = source.Clone();
+            copy.Start = Math.Max(0, start + source.Start);
+            if (TargetLaneFor(copy) is not { } lane) continue;
+            commands.Add(new AddEventCommand(lane, copy));
+            pasted.Add(copy);
+        }
+
+        if (pasted.Count == 0)
+        {
+            StatusText = "Nothing to paste here — no lane accepts this clip";
+            return;
+        }
+
+        // Clone() deliberately drops links; the pasted pair is re-linked now
+        // that both halves exist, so they move and split together like the original.
+        if (pasted.Count == 2)
+        {
+            pasted[0].LinkedEventId = pasted[1].Id;
+            pasted[1].LinkedEventId = pasted[0].Id;
+        }
+
+        // Selected before executing: the command triggers the timeline rebuild,
+        // and the new clip should come back already highlighted.
+        _selectedEventId = pasted[0].Id;
+        _undoRedo.ExecuteCommand(commands.Count == 1
+            ? commands[0]
+            : new CompositeCommand(status, commands));
+        StatusText = $"{status} at {FormatTime(pasted[0].Start)}";
+    }
+
+    /// <summary>Where a pasted clip goes: its own kind of lane, created if there is none.</summary>
+    private Track? TargetLaneFor(TimelineEvent evt)
+    {
+        var project = _projects.Current;
+        if (project.Tracks.FirstOrDefault(t => TrackRouting.Accepts(project, t, evt)) is { } lane)
+            return lane;
+
+        if (evt.Text != null)
+        {
+            AddTrack(TrackType.Overlay);
+        }
+        else if (project.Media.FindById(evt.MediaId) is { } media)
+        {
+            AddTrack(TrackRouting.LaneKindFor(media.Type));
+        }
+        else
+        {
+            return null;
+        }
+        return project.Tracks.FirstOrDefault(t => TrackRouting.Accepts(project, t, evt));
     }
 
     // ---------- Selected event volume (0–200%) ----------

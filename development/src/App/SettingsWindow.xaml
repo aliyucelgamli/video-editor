@@ -40,10 +40,6 @@
         <TextBlock x:Name="PreviewQualityHint" FontSize="10" Margin="0,4,0,0"
                    TextWrapping="Wrap" Foreground="#FF5A616E"/>
 
-        <CheckBox x:Name="GpuDecodeCheck" Style="{StaticResource FlatCheckBox}" Margin="0,12,0,0"
-                  Content="Decode preview frames on the GPU (experimental)"
-                  ToolTip="Only affects seeking to a new frame. Run the performance test below to see whether it is faster on this machine."/>
-
         <TextBlock Text="DIAGNOSTICS" Style="{StaticResource PanelHeader}" Margin="0,16,0,0"/>
         <TextBlock Text="Measures where playback time goes on this machine and writes a report you can share."
                    FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap"

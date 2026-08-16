@@ -21,6 +21,9 @@ public partial class MainWindow : Window
     /// <summary>Whatever is being dragged floats above everything else.</summary>
     private const int DragZIndex = 100;
 
+    /// <summary>Lane row pitch: the 56 px lane plus its 2 px gap.</summary>
+    private const double LaneHeight = 58.0;
+
     private readonly MainViewModel _viewModel = new();
     private readonly IDialogService _dialogs = new DialogService();
 
@@ -37,7 +40,13 @@ public partial class MainWindow : Window
     private Border? _movingEventBorder;
     private Border? _linkedEventBorder;
     private double _movingEventStartX;
+    private double _movingEventStartY;
     private double _movingEventNewStart;
+
+    // Vertical drag: which lane the clip would land on, and the lane it started on.
+    private Border? _movingLaneBorder;
+    private int _movingEventTrackIndex = -1;
+    private Guid? _movingEventTargetTrack;
     private double _stretchNewDuration;
     private double _slipDeltaSeconds;
     private bool _isDraggingEvent;
@@ -86,6 +95,9 @@ public partial class MainWindow : Window
         ["file.export"] = _viewModel.ExportCommand,
         ["edit.undo"] = _viewModel.UndoCommand,
         ["edit.redo"] = _viewModel.RedoCommand,
+        ["edit.copy"] = _viewModel.CopyCommand,
+        ["edit.paste"] = _viewModel.PasteCommand,
+        ["edit.duplicate"] = _viewModel.DuplicateCommand,
         ["edit.delete"] = _viewModel.DeleteSelectedCommand,
         ["edit.split"] = _viewModel.SplitAtPlayheadCommand,
         ["edit.unlink"] = _viewModel.UnlinkSelectedCommand,
@@ -146,7 +158,6 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
         _viewModel.SaveSettings();
         _viewModel.ApplyPreviewQuality();
-        _viewModel.ApplyDecoderSetting();
     }
 
     /// <summary>File → New: resolution/fps dialog, then a fresh project.</summary>
@@ -297,7 +308,10 @@ public partial class MainWindow : Window
     private void MediaLibrary_Drop(object sender, DragEventArgs e)
     {
         if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-            _viewModel.ImportFiles(paths);
+        {
+            // A project is never library media — dropping one opens it, wherever it lands.
+            if (!TryOpenDroppedProject(paths)) _viewModel.ImportFiles(paths);
+        }
         e.Handled = true;
     }
 
@@ -367,9 +381,44 @@ public partial class MainWindow : Window
             Guid.TryParse(e.Data.GetData(MediaIdFormat) as string, out var mediaId))
             _viewModel.DropMediaOnTrack(mediaId, track.Id, time);
         else if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+        {
+            // A project dropped on a lane means "open this", not "import it".
+            if (TryOpenDroppedProject(paths)) { e.Handled = true; return; }
             _viewModel.DropFilesOnTrack(track.Id, paths, time);
+        }
 
         e.Handled = true;
+    }
+
+    // ---------- Dropping a .veproj anywhere on the window opens it ----------
+
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = DroppedProjectPath(e) != null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths && TryOpenDroppedProject(paths))
+            e.Handled = true;
+    }
+
+    /// <summary>The first project file in a drop, or null when there is none.</summary>
+    private static string? DroppedProjectPath(DragEventArgs e) =>
+        e.Data.GetData(DataFormats.FileDrop) is string[] paths
+            ? paths.FirstOrDefault(MainViewModel.IsProjectFile)
+            : null;
+
+    /// <summary>
+    /// Opens a dropped project. Unsaved work is guarded by the view model, which
+    /// asks nothing when the current project has no changes to lose.
+    /// </summary>
+    private bool TryOpenDroppedProject(IEnumerable<string> paths)
+    {
+        if (paths.FirstOrDefault(MainViewModel.IsProjectFile) is not { } project) return false;
+        _viewModel.OpenProjectFile(project);
+        return true;
     }
 
     private static TrackViewModel? LaneTrack(object sender) =>
@@ -433,6 +482,16 @@ public partial class MainWindow : Window
         menu.Items.Add(addTrack);
 
         menu.Items.Add(new Separator());
+
+        var paste = new MenuItem
+        {
+            Header = "Paste Here",
+            InputGestureText = "Ctrl+V",
+            IsEnabled = _viewModel.CanPaste
+        };
+        // Right-clicking a spot means "put it there", not "put it at the playhead".
+        paste.Click += (_, _) => { _viewModel.SeekTo(time); _viewModel.PasteClipboard(); };
+        menu.Items.Add(paste);
 
         var split = new MenuItem { Header = "Split at Playhead", InputGestureText = "S" };
         split.Click += (_, _) => _viewModel.SplitAtPlayheadCommand.Execute(null);
@@ -542,10 +601,19 @@ public partial class MainWindow : Window
         _movingEventBorder = border;
         // Lift it over its neighbours, otherwise the clip you are holding
         // disappears behind the ones it passes.
-        Panel.SetZIndex(border, DragZIndex);
+        RaiseInPanel(border, DragZIndex);
         _linkedEventBorder = evt.LinkedEventId is Guid linkedId ? FindEventBorder(linkedId) : null;
-        if (_linkedEventBorder != null) Panel.SetZIndex(_linkedEventBorder, DragZIndex);
+        if (_linkedEventBorder != null) RaiseInPanel(_linkedEventBorder, DragZIndex);
+
+        // The lane itself has to float too, otherwise a clip dragged upward is
+        // painted behind the lane above it.
+        _movingLaneBorder = FindLaneBorder(border);
+        if (_movingLaneBorder != null) RaiseInPanel(_movingLaneBorder, DragZIndex);
+        _movingEventTrackIndex = _viewModel.IndexOfTrackForEvent(evt.Id);
+        _movingEventTargetTrack = null;
+
         _movingEventStartX = e.GetPosition(LanesScroll).X;
+        _movingEventStartY = e.GetPosition(LanesScroll).Y;
         _movingEventNewStart = evt.StartSeconds;
         _stretchNewDuration = evt.DurationSeconds;
         _isDraggingEvent = false;
@@ -553,6 +621,40 @@ public partial class MainWindow : Window
 
         border.CaptureMouse();
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Floats an item above its siblings while it is dragged.
+    ///
+    /// Panel.ZIndex is read by the PANEL from its own direct children, and in an
+    /// ItemsControl that child is the generated container, not the element the
+    /// template produced. Setting it on the template root does nothing, which is
+    /// why a dragged lane header used to slide underneath its neighbours and
+    /// look like it had vanished. Walk up to the container first.
+    /// </summary>
+    private static void RaiseInPanel(DependencyObject element, int zIndex)
+    {
+        var node = element;
+        while (node != null)
+        {
+            var parent = VisualTreeHelper.GetParent(node);
+            if (parent is Panel && node is UIElement container)
+            {
+                Panel.SetZIndex(container, zIndex);
+                return;
+            }
+            node = parent;
+        }
+    }
+
+    /// <summary>The lane Border a clip lives in (its DataContext is the track).</summary>
+    private static Border? FindLaneBorder(DependencyObject start)
+    {
+        for (var node = VisualTreeHelper.GetParent(start); node != null;
+             node = VisualTreeHelper.GetParent(node))
+            if (node is Border { DataContext: TrackViewModel } lane)
+                return lane;
+        return null;
     }
 
     /// <summary>
@@ -609,12 +711,13 @@ public partial class MainWindow : Window
         if (e.LeftButton != MouseButtonState.Pressed) return;
 
         var deltaX = e.GetPosition(LanesScroll).X - _movingEventStartX;
-        if (!_isDraggingEvent && Math.Abs(deltaX) < DragThreshold) return;
+        var deltaY = e.GetPosition(LanesScroll).Y - _movingEventStartY;
+        if (!_isDraggingEvent && Math.Abs(deltaX) < DragThreshold && Math.Abs(deltaY) < DragThreshold) return;
         _isDraggingEvent = true;
 
         switch (_eventDragMode)
         {
-            case EventDragMode.Move: DragMove(deltaX); break;
+            case EventDragMode.Move: DragMove(deltaX, deltaY); break;
             case EventDragMode.StretchRight: DragStretch(deltaX, fromLeftEdge: false); break;
             case EventDragMode.StretchLeft: DragStretch(deltaX, fromLeftEdge: true); break;
             case EventDragMode.TrimRight: DragTrim(deltaX, fromLeftEdge: false); break;
@@ -623,17 +726,33 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DragMove(double deltaX)
+    private void DragMove(double deltaX, double deltaY)
     {
         var pps = _viewModel.PixelsPerSecond;
         var desired = _movingEvent!.StartSeconds + deltaX / pps;
         _movingEventNewStart = _viewModel.SnapTime(desired, _movingEvent.DurationSeconds, _movingEvent.Id);
+        var offsetX = (_movingEventNewStart - _movingEvent.StartSeconds) * pps;
 
-        var transform = new TranslateTransform((_movingEventNewStart - _movingEvent.StartSeconds) * pps, 0);
-        _movingEventBorder!.RenderTransform = transform;
-        // The linked audio/video partner follows live, not only after the drop.
-        if (_linkedEventBorder != null) _linkedEventBorder.RenderTransform = transform;
-        _viewModel.StatusText = $"Move to {_movingEventNewStart:0.##}s";
+        // Vertical: snap to whole lanes. A lane that cannot hold this clip
+        // (sound on a video lane, a title on an audio lane) is simply not
+        // offered — the block stays on the last lane that accepted it.
+        var laneDelta = (int)Math.Round(deltaY / LaneHeight);
+        var targetIndex = _movingEventTrackIndex + laneDelta;
+        var target = laneDelta == 0
+            ? null
+            : _viewModel.DropTargetTrackFor(_movingEvent.Id, targetIndex);
+        if (laneDelta != 0 && target is null) laneDelta = 0;
+        _movingEventTargetTrack = target;
+
+        var offsetY = laneDelta * LaneHeight;
+        _movingEventBorder!.RenderTransform = new TranslateTransform(offsetX, offsetY);
+        // The linked audio/video partner follows in time only — it keeps its lane.
+        if (_linkedEventBorder != null)
+            _linkedEventBorder.RenderTransform = new TranslateTransform(offsetX, 0);
+
+        _viewModel.StatusText = laneDelta == 0
+            ? $"Move to {_movingEventNewStart:0.##}s"
+            : $"Move to {_movingEventNewStart:0.##}s on {_viewModel.Tracks[targetIndex].Name}";
     }
 
     /// <summary>
@@ -734,20 +853,26 @@ public partial class MainWindow : Window
         var newStart = _movingEventNewStart;
         var newDuration = _stretchNewDuration;
         var slipDelta = _slipDeltaSeconds;
+        var targetTrack = _movingEventTargetTrack;
 
         if (_movingEventBorder != null)
         {
             _movingEventBorder.RenderTransform = null;
-            Panel.SetZIndex(_movingEventBorder, 0);
+            RaiseInPanel(_movingEventBorder, 0);
         }
         if (_linkedEventBorder != null)
         {
             _linkedEventBorder.RenderTransform = null;
-            Panel.SetZIndex(_linkedEventBorder, 0);
+            RaiseInPanel(_linkedEventBorder, 0);
         }
+        if (_movingLaneBorder != null) RaiseInPanel(_movingLaneBorder, 0);
+
         _movingEvent = null;
         _movingEventBorder = null;
         _linkedEventBorder = null;
+        _movingLaneBorder = null;
+        _movingEventTargetTrack = null;
+        _movingEventTrackIndex = -1;
         _isDraggingEvent = false;
         _eventDragMode = EventDragMode.None;
         _slipDeltaSeconds = 0;
@@ -757,7 +882,7 @@ public partial class MainWindow : Window
         switch (mode)
         {
             case EventDragMode.Move:
-                _viewModel.MoveEvent(evt.Id, newStart);
+                _viewModel.MoveEvent(evt.Id, newStart, targetTrack);
                 break;
             case EventDragMode.StretchLeft or EventDragMode.StretchRight:
                 _viewModel.StretchEvent(evt.Id, newStart, newDuration);
@@ -783,7 +908,7 @@ public partial class MainWindow : Window
         _draggingTrack = track;
         _trackDragStart = e.GetPosition(HeadersScroll);
         _trackDragActive = false;
-        Panel.SetZIndex(header, DragZIndex); // stay visible while it travels over other lanes
+        RaiseInPanel(header, DragZIndex); // stay visible while it travels over other lanes
         header.CaptureMouse();
     }
 
@@ -812,18 +937,17 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement header)
         {
             header.RenderTransform = null;
-            Panel.SetZIndex(header, 0);
+            RaiseInPanel(header, 0);
         }
         if (track is null || !wasDragging) return;
 
-        // Lane height is fixed (56 + 2 margin), so the drop index follows from
-        // how far the header travelled.
-        const double laneHeight = 58.0;
+        // Lane height is fixed, so the drop index follows from how far the
+        // header travelled.
         var offsetY = Mouse.GetPosition(HeadersScroll).Y - _trackDragStart.Y;
         var currentIndex = _viewModel.IndexOfTrack(track.Id);
         if (currentIndex < 0) return;
 
-        _viewModel.MoveTrack(track.Id, currentIndex + (int)Math.Round(offsetY / laneHeight));
+        _viewModel.MoveTrack(track.Id, currentIndex + (int)Math.Round(offsetY / LaneHeight));
     }
 
     // ---------- fx button (Event FX window) + right-click menu ----------
@@ -992,6 +1116,16 @@ public partial class MainWindow : Window
             };
             removeEffects.Click += (_, _) => _viewModel.RemoveAllEffects(evt.Id);
             menu.Items.Add(removeEffects);
+
+            menu.Items.Add(new Separator());
+
+            var copy = new MenuItem { Header = "Copy", InputGestureText = "Ctrl+C" };
+            copy.Click += (_, _) => _viewModel.CopySelected();
+            menu.Items.Add(copy);
+
+            var duplicate = new MenuItem { Header = "Duplicate", InputGestureText = "Ctrl+D" };
+            duplicate.Click += (_, _) => _viewModel.DuplicateSelected();
+            menu.Items.Add(duplicate);
 
             menu.Items.Add(new Separator());
 

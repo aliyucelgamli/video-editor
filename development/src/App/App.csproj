@@ -8,7 +8,17 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>VideoEditor</AssemblyName>
     <RootNamespace>VideoEditor.App</RootNamespace>
+    <!-- Explorer / taskbar icon of the built exe. -->
+    <ApplicationIcon>Assets\appicon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- Branding. Replace these two files and rebuild to change the app's look;
+       appicon.png is what the title bar badge shows, appicon.ico the window
+       and executable icon. -->
+  <ItemGroup>
+    <Resource Include="Assets\appicon.png" />
+    <Resource Include="Assets\appicon.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Domain\Domain.csproj" />

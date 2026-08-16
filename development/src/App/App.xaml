@@ -376,19 +376,32 @@
 
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="Padding" Value="9,6"/>
+            <Setter Property="Padding" Value="8,6"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter/>
+                        <Border x:Name="Row" Background="Transparent" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}" Margin="2,1">
+                            <DockPanel>
+                                <!-- A tick instead of a highlight-only selection: which
+                                     row is current stays readable while hovering others. -->
+                                <TextBlock x:Name="Tick" DockPanel.Dock="Left" Width="16"
+                                           Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                           VerticalAlignment="Center" Opacity="0"
+                                           Foreground="{StaticResource AccentBrush}"/>
+                                <ContentPresenter VerticalAlignment="Center"/>
+                            </DockPanel>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Row" Property="Background" Value="#FF2E3646"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Row" Property="Background" Value="#FF25405F"/>
+                                <Setter TargetName="Row" Property="Background" Value="#FF23364E"/>
+                                <Setter TargetName="Tick" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -425,11 +438,17 @@
                             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
                                    Focusable="False" PopupAnimation="Fade"
                                    IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <!-- Margin leaves room for the drop shadow to fall. -->
                                 <Border Background="#FF1E2128" BorderBrush="#FF3A3F4B" BorderThickness="1"
-                                        CornerRadius="5" Margin="0,3,0,0"
+                                        CornerRadius="6" Margin="0,3,6,6"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                    <ScrollViewer>
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="12" ShadowDepth="3" Direction="270"
+                                                          Color="#FF05070A" Opacity="0.55"/>
+                                    </Border.Effect>
+                                    <!-- The app-wide dark ScrollBar style applies here too. -->
+                                    <ScrollViewer Margin="2">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Border>
@@ -458,6 +477,187 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- ============ Menus and context menus ============ -->
+        <!-- Templated end to end, because the stock popup is a bright white
+             card that appears over the dark app the moment any menu opens. -->
+
+        <Style x:Key="DarkSeparator" TargetType="Separator">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Margin" Value="8,4"/>
+            <Setter Property="Background" Value="#FF333947"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="{TemplateBinding Background}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Separator" BasedOn="{StaticResource DarkSeparator}"/>
+        <!-- Separators inside a menu are styled by this key, not by the implicit
+             style above — without it they keep the light system look. -->
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator"
+               BasedOn="{StaticResource DarkSeparator}"/>
+
+        <!-- The popup card shared by dropdowns, submenus and context menus.
+             A Border (not a templated ContentControl) so the items host inside
+             it stays a plain visual child, exactly like the stock templates. -->
+        <Style x:Key="MenuPopupCard" TargetType="Border">
+            <Setter Property="Background" Value="#FF1E2128"/>
+            <Setter Property="BorderBrush" Value="#FF3A3F4B"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="3"/>
+            <Setter Property="Margin" Value="0,2,6,6"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="14" ShadowDepth="3" Direction="270"
+                                      Color="#FF05070A" Opacity="0.55"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ContextMenu">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Style="{StaticResource MenuPopupCard}">
+                            <ScrollViewer>
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Menu">
+                        <ItemsPresenter/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="9,5"/>
+            <Style.Triggers>
+                <!-- Top-level headers sit on the dark bar; everything else lives
+                     inside the popup card and needs the row template. -->
+                <Trigger Property="Role" Value="TopLevelHeader">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="MenuItem">
+                                <Grid>
+                                    <Border x:Name="Chip" CornerRadius="5" Background="Transparent"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
+                                    </Border>
+                                    <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False"
+                                           Placement="Bottom" PopupAnimation="Fade"
+                                           IsOpen="{TemplateBinding IsSubmenuOpen}">
+                                        <Border Style="{StaticResource MenuPopupCard}">
+                                            <StackPanel IsItemsHost="True"
+                                                        KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                        </Border>
+                                    </Popup>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsHighlighted" Value="True">
+                                        <Setter TargetName="Chip" Property="Background" Value="#FF2A2F3A"/>
+                                    </Trigger>
+                                    <Trigger Property="IsSubmenuOpen" Value="True">
+                                        <Setter TargetName="Chip" Property="Background" Value="#FF2E3646"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+
+                <Trigger Property="Role" Value="TopLevelItem">
+                    <Setter Property="Template" Value="{DynamicResource MenuRowTemplate}"/>
+                </Trigger>
+                <Trigger Property="Role" Value="SubmenuItem">
+                    <Setter Property="Template" Value="{DynamicResource MenuRowTemplate}"/>
+                </Trigger>
+                <Trigger Property="Role" Value="SubmenuHeader">
+                    <Setter Property="Template" Value="{DynamicResource SubmenuHeaderTemplate}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- One row inside a popup: icon column, header, gesture hint. -->
+        <ControlTemplate x:Key="MenuRowTemplate" TargetType="MenuItem">
+            <Border x:Name="Row" CornerRadius="4" Background="Transparent"
+                    Padding="{TemplateBinding Padding}" Margin="1">
+                <DockPanel>
+                    <TextBlock x:Name="Check" DockPanel.Dock="Left" Width="16"
+                               Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                               VerticalAlignment="Center" Opacity="0"
+                               Foreground="{StaticResource AccentBrush}"/>
+                    <TextBlock DockPanel.Dock="Right" Margin="18,0,2,0" VerticalAlignment="Center"
+                               FontSize="11" Foreground="#FF6E7686"
+                               Text="{TemplateBinding InputGestureText}"/>
+                    <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                      VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Row" Property="Background" Value="#FF2E3646"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="Check" Property="Opacity" Value="1"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.4"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- A row that opens a submenu: same look plus a chevron and its own card. -->
+        <ControlTemplate x:Key="SubmenuHeaderTemplate" TargetType="MenuItem">
+            <Border x:Name="Row" CornerRadius="4" Background="Transparent"
+                    Padding="{TemplateBinding Padding}" Margin="1">
+                <Grid>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Left" Width="16"/>
+                        <TextBlock DockPanel.Dock="Right" Margin="18,0,0,0" VerticalAlignment="Center"
+                                   Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                   Foreground="#FF6E7686"/>
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                          VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False"
+                           Placement="Right" HorizontalOffset="-2" PopupAnimation="Fade"
+                           IsOpen="{TemplateBinding IsSubmenuOpen}">
+                        <Border Style="{StaticResource MenuPopupCard}">
+                            <StackPanel IsItemsHost="True"
+                                        KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Row" Property="Background" Value="#FF2E3646"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.4"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
 
         <!-- ============ Toolbar ============ -->
         <!-- Buttons live in rounded segments instead of one flat strip, so the

@@ -20,6 +20,7 @@ public static class Program
         PreviewSelectionTests.Register();
         LayerTests.Register();
         TrackOrderTests.Register();
+        ClipboardTests.Register();
         MediaEngineTests.Register();
         DiagnosticsTests.Register();
         FfmpegIntegrationTests.Register();

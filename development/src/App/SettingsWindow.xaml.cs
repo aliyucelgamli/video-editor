@@ -34,7 +34,6 @@ public partial class SettingsWindow : Window
         ExportFolderBox.Text = settings.DefaultExportFolder ?? string.Empty;
         GpuDefaultCheck.IsChecked = settings.UseHardwareEncoderByDefault;
         ConfirmExitCheck.IsChecked = settings.ConfirmOnExit;
-        GpuDecodeCheck.IsChecked = settings.UseHardwareDecoder;
 
         PreviewQualityBox.ItemsSource = PreviewQuality.All;
         PreviewQualityBox.SelectedItem = PreviewQuality.ForWidth(settings.PreviewWidth);
@@ -134,7 +133,6 @@ public partial class SettingsWindow : Window
         _settings.ConfirmOnExit = ConfirmExitCheck.IsChecked == true;
         if (PreviewQualityBox.SelectedItem is PreviewQuality quality)
             _settings.PreviewWidth = quality.Width;
-        _settings.UseHardwareDecoder = GpuDecodeCheck.IsChecked == true;
         DialogResult = true;
     }
 

@@ -14,4 +14,13 @@ public class EffectInstance
     public bool Enabled { get; set; } = true;
     public Dictionary<string, double> Parameters { get; set; } = new();
     public List<KeyframeTrack> Keyframes { get; set; } = new();
+
+    /// <summary>Independent copy with a new identity (clip copy/paste).</summary>
+    public EffectInstance Clone() => new()
+    {
+        Type = Type,
+        Enabled = Enabled,
+        Parameters = new Dictionary<string, double>(Parameters),
+        Keyframes = Keyframes.Select(track => track.Clone()).ToList()
+    };
 }

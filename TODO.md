@@ -63,12 +63,12 @@
     stills.
 20. **Split of a linked pair** — cross-link the two second halves
     (`SplitEventCommand` leaves them unlinked).
-21. **Dark ContextMenu + menu dropdown styling** (top-level menu bar and
-    ComboBoxes are dark now, the popup submenus still use the light system
-    theme; app dialogs are already themed via DialogWindow); fix the stale event
-    reference in EventPropertiesWindow.
+21. **Stale event reference in EventPropertiesWindow** — it keeps the clip it
+    was opened with, so an undo that replaces the event leaves it editing a
+    ghost.
 22. **More settings** — autosave interval, single-key shortcut suppression
-    while a text box has focus.
+    while a text box has focus (MainWindow has no text box today, so nothing
+    steals Ctrl+C yet — this bites the moment one is added).
     Also: a separate "playback selection" if the shared yellow range ever feels
     wrong for export vs loop (they are one range today, VEGAS-style).
 23. **Menu InputGestureText from the ShortcutMap** — menu hints are static
@@ -79,12 +79,11 @@
 Run **Settings → Diagnostics → Run performance test** first; the report says
 which of these the machine actually needs.
 
-24. **Decide on GPU decoding with the numbers.** `HardwareDecoders` detects and
-    verifies an accelerator and Settings > Playback can switch it on for
-    single-frame decoding (off by default); the report times cold scrub with and
-    without it. If the GPU line wins on real machines, make it the default and
-    extend it to `StreamingFramePipe`; if it loses, delete the setting rather
-    than leaving a knob nobody should touch.
+24. ~~GPU decoding~~ — **measured and rejected** (RTX 4070 + Ryzen 5 7500F:
+    289 ms vs 127 ms per cold frame). Per-process accelerator init costs more
+    than it saves at preview sizes. The probe still times it, so a machine or a
+    codec where it wins would show up. Revisit only for 4K/HEVC sources, and
+    then inside `StreamingFramePipe` where one process serves many frames.
 25. **Proxy media** (also P2 #12) — the largest and most reliable win for 4K
     footage: edit against 720p intermediates, export from the originals.
 26. **SIMD pixel operations** — `System.Numerics.Vector<T>` over the BGRA

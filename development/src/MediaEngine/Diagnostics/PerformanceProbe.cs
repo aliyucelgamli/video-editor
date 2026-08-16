@@ -285,10 +285,23 @@ public class PerformanceProbe
         var accelerator = await HardwareDecoders.DetectAsync(ffmpeg, cancellationToken).ConfigureAwait(false);
         if (accelerator is null) return 0;
 
-        var extractor = new FrameExtractor(_locator) { HardwareAccelerator = accelerator };
-        var compositor = new FrameCompositor(extractor, _effects);
-        foreach (var (style, raster) in _compositor.TextRasters.Snapshot())
-            compositor.TextRasters.StoreRaw(style, raster);
+        return await MeasureColdComposeAsync(
+                project, width, height, accelerator, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Composes frames through a PRIVATE extractor, so nothing is served from a
+    /// warm cache. Without this a second run of the report measures cache hits
+    /// (single-digit ms) and looks like a miracle instead of a measurement.
+    /// </summary>
+    private async Task<double> MeasureColdComposeAsync(
+        Project project, int width, int height, string? accelerator,
+        CancellationToken cancellationToken)
+    {
+        var compositor = new FrameCompositor(new FrameExtractor(_locator, accelerator), _effects);
+        foreach (var (key, raster) in _compositor.TextRasters.Snapshot())
+            compositor.TextRasters.StoreRaw(key, raster);
 
         var stopwatch = Stopwatch.StartNew();
         const int frames = 5;
@@ -377,22 +390,11 @@ public class PerformanceProbe
     }
 
     /// <summary>The per-frame path scrubbing uses: seek + decode for every layer.</summary>
-    private async Task<double> MeasureComposeAsync(
-        Project project, int width, int height, CancellationToken cancellationToken)
-    {
-        if (project.Duration <= 0.01) return 0;
-
-        var stopwatch = Stopwatch.StartNew();
-        const int frames = 5;
-        for (var i = 0; i < frames; i++)
-        {
-            var time = project.Duration * (i + 1) / (frames + 1);
-            await _compositor.ComposeAsync(project, time, width, height, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        stopwatch.Stop();
-        return stopwatch.Elapsed.TotalMilliseconds / frames;
-    }
+    private Task<double> MeasureComposeAsync(
+        Project project, int width, int height, CancellationToken cancellationToken) =>
+        project.Duration <= 0.01
+            ? Task.FromResult(0.0)
+            : MeasureColdComposeAsync(project, width, height, null, cancellationToken);
 
     private static (Track Track, TimelineEvent Event, MediaItem Media)? FindFirstVideoLayer(Project project)
     {
@@ -439,10 +441,20 @@ public class PerformanceProbe
             line($"  * Landing on a new frame costs {timings.ComposeMs:0} ms — that is ffmpeg seeking " +
                  "and decoding from the nearest keyframe, once per layer, and it cannot be avoided.");
             if (timings.WarmScrubMs > 0)
-                line($"  * Continuing the drag costs {timings.WarmScrubMs:0} ms/frame " +
-                     $"({timings.ComposeMs / Math.Max(1, timings.WarmScrubMs):0.#}x cheaper) because the " +
-                     "decoders primed at the previous position are reused.");
+                line(timings.WarmScrubMs < timings.ComposeMs
+                    ? $"  * Continuing the drag costs {timings.WarmScrubMs:0} ms/frame " +
+                      $"({timings.ComposeMs / timings.WarmScrubMs:0.#}x cheaper) because the decoders " +
+                      "primed at the previous position are reused."
+                    : $"  * Continuing the drag costs {timings.WarmScrubMs:0} ms/frame, no cheaper than " +
+                      "landing cold — the primed decoders are not being hit; check ScrubRenderer.");
         }
+
+        if (timings.GpuScrubMs > 0 && timings.ComposeMs > 0)
+            line(timings.GpuScrubMs < timings.ComposeMs
+                ? $"  * GPU decoding would be {timings.ComposeMs / timings.GpuScrubMs:0.#}x faster here — " +
+                  "worth enabling for this machine's media."
+                : $"  * GPU decoding is {timings.GpuScrubMs / timings.ComposeMs:0.#}x SLOWER here " +
+                  "(per-process accelerator init costs more than it saves), which is why it stays off.");
 
         line("");
         line("Share this file with Claude to decide what to optimize next.");

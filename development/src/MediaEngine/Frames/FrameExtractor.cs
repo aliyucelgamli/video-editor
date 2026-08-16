@@ -31,15 +31,20 @@ public class FrameExtractor
     private readonly LinkedList<string> _recency = new();
     private long _cachedBytes;
 
-    public FrameExtractor(FFmpegLocator locator) => _locator = locator;
+    private readonly string? _hardwareAccelerator;
 
     /// <summary>
-    /// ffmpeg <c>-hwaccel</c> value for single-frame decoding, or null for
-    /// software. Landing on a new position decodes a whole GOP, which is where
-    /// a GPU decoder can pay off; set from the user setting after
-    /// <see cref="HardwareDecoders.DetectAsync"/> has verified one works.
+    /// <paramref name="hardwareAccelerator"/> is an ffmpeg <c>-hwaccel</c> value.
+    /// The app leaves it null — measurements showed GPU decoding of single
+    /// frames to be ~2x SLOWER than the CPU, because every frame pays the
+    /// accelerator's per-process initialisation. Only the performance probe
+    /// sets it, to keep proving that on each machine.
     /// </summary>
-    public string? HardwareAccelerator { get; set; }
+    public FrameExtractor(FFmpegLocator locator, string? hardwareAccelerator = null)
+    {
+        _locator = locator;
+        _hardwareAccelerator = hardwareAccelerator;
+    }
 
     public async Task<RawFrame?> GetFrameAsync(
         string mediaPath, double sourceTime, int width, int height,
@@ -71,7 +76,7 @@ public class FrameExtractor
                     $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black";
 
         var arguments = new List<string> { "-loglevel", "error" };
-        if (HardwareAccelerator is { Length: > 0 } accelerator)
+        if (_hardwareAccelerator is { Length: > 0 } accelerator)
         {
             // No -hwaccel_output_format: frames come back in system memory, so
             // the filter chain and everything downstream stay unchanged.

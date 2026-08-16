@@ -13,4 +13,13 @@ public class KeyframeTrack
 {
     public string Property { get; set; } = string.Empty;
     public List<Keyframe> Keyframes { get; set; } = new();
+
+    /// <summary>Independent copy, keyframes included (clip copy/paste).</summary>
+    public KeyframeTrack Clone() => new()
+    {
+        Property = Property,
+        Keyframes = Keyframes
+            .Select(k => new Keyframe { Time = k.Time, Value = k.Value, Interpolation = k.Interpolation })
+            .ToList()
+    };
 }

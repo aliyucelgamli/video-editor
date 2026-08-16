@@ -25,14 +25,6 @@ public class AppSettings
     /// </summary>
     public int PreviewWidth { get; set; } = 640;
 
-    /// <summary>
-    /// Decode preview frames on the GPU when a working accelerator is found.
-    /// Off by default: it only helps when seeking through long GOPs, and on
-    /// some drivers the per-process init cost outweighs the saving. The
-    /// performance report measures both so this can be decided with numbers.
-    /// </summary>
-    public bool UseHardwareDecoder { get; set; }
-
     /// <summary>Keyboard shortcut overrides (action id → gestures).</summary>
     public Dictionary<string, string[]> Shortcuts { get; set; } = new();
 }

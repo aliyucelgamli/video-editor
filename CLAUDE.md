@@ -50,7 +50,7 @@ development/
     App/           WPF (MVVM). ViewModels + Services (TimelineVisualsService,
                    MediaEnrichmentService) + XAML. No FFmpeg calls in views/viewmodels —
                    always go through MediaEngine services.
-  tests/Tests/     Zero-dependency test suite (83 tests). Run: test.bat / dotnet run.
+  tests/Tests/     Zero-dependency test suite (87 tests). Run: test.bat / dotnet run.
 examples/          Tiny test assets (1080p clips, 64×64 images) for drag & drop testing.
 user/              User-editable assets (effects/*.vefx, templates, fonts, exports…).
                    NEVER deleted by updates.
@@ -109,7 +109,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 22)
+## Feature state (2026-08-16, round 24)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -184,16 +184,34 @@ probe** (`MediaEngine/Diagnostics/PerformanceProbe`, Settings > Diagnostics > Ru
 performance test): machine + GPU + ffmpeg hwaccels, which render path the project
 forces, per-operation pixel timings, decode/compose/scrub ms per frame and a verdict,
 written to `user/logs/performance-*.txt` for sharing. Dark `ComboBox` styling app-wide.
-**Scrub performance** (round 22, driven by a real report): `FrameCompositor.ComposeAsync`
-decodes its layers concurrently instead of one after another; `ScrubRenderer` primes
-sequential decoders just past every cold frame in the background, so continuing a drag
-forward reads them instead of seeking again (measured ~4-5x, and it is the same
-decoders playback uses at ~3 ms/frame); single-frame decodes skip audio/subtitle/data
-streams; the frame cache is bounded by bytes (64 MB) rather than entries;
-`HardwareDecoders` detects and *verifies* a GPU decoder (cuda/d3d11va/qsv/dxva2 — a
-listed one can still fail, and ffmpeg silently falls back, so a silent stderr is part
-of the check) behind an off-by-default Settings toggle, with the report timing cold
-scrub both ways. run.bat build-first flow. 83 tests green.
+**Scrub performance** (driven by real reports): `FrameCompositor.ComposeAsync` decodes
+its layers concurrently instead of one after another; `ScrubRenderer` primes sequential
+decoders just past every cold frame in the background, so continuing a drag forward
+reads them instead of seeking again; single-frame decodes skip audio/subtitle/data
+streams; the frame cache is bounded by bytes (64 MB) rather than entries. Measured on
+the user's Ryzen 5 7500F: cold landing 354 -> 127 ms, dragging 15 ms (8.3x cheaper),
+playback 2.8 ms/frame. **GPU decoding was measured and rejected** — `-hwaccel cuda`
+came out 2.3x SLOWER for single frames (289 ms vs 127) because every process pays the
+accelerator's init; `HardwareDecoders` (detect + verify, silent-stderr check) survives
+only inside the probe, which keeps timing both paths so the decision stays evidence-based.
+**Clips drag between lanes**: a vertical drag snaps to whole lanes, offers only lanes
+that can hold the clip (`Application/Editing/TrackRouting` — one home for the rule,
+shared with media drops and auto-routing), floats the lane it crosses, and moves a
+linked A/V partner in time only, never out of its own lane. **App icon**
+(`src/App/Assets/appicon.png` + `.ico`, replace and rebuild to rebrand): window,
+executable and title-bar badge, with a light band that sweeps the mark every 9 s,
+masked to the artwork, and it only runs while the pointer is on the badge.
+**Clip clipboard**: Ctrl+C / Ctrl+V / Ctrl+D (registered actions, so they are remappable);
+the clipboard is in-app (a clip is a reference into this project, meaningless to other
+programs), starts are stored relative to the copied clip, a copied A/V pair is re-linked
+after pasting, and Ctrl+D lands the copy at the original's end so repeats lay end to end.
+**Dropping a .veproj** anywhere on the window opens it; unsaved work is guarded first and
+the non-exit prompt now offers Save First / Discard / Keep Editing (an untouched project
+asks nothing). **All popups are dark**: Menu, MenuItem (top-level, row and submenu-header
+templates with gesture hints), ContextMenu and menu Separators
+(`{x:Static MenuItem.SeparatorStyleKey}` — the implicit style does not reach them), plus a
+polished ComboBox with a drop shadow and a tick on the selected row. No system-theme
+surface is left. run.bat build-first flow. 87 tests green.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;

@@ -1,4 +1,5 @@
 using VideoEditor.Application.Commands;
+using VideoEditor.Application.Editing;
 using VideoEditor.Domain;
 using VideoEditor.MediaEngine.Frames;
 
@@ -60,6 +61,69 @@ public static class TrackOrderTests
             new MoveTrackCommand(project, lower, 0).Execute();
             order = FrameCompositor.EnumerateVisibleLayers(project, 1);
             Assert.Equal("top-lane", order[^1].Event.Name, "after the move the other lane is on top");
+        });
+
+        TestRunner.Add("Clips: move to another lane, and back on undo", () =>
+        {
+            var project = new Project();
+            var t1 = new Track { Name = "T1", Type = TrackType.Overlay };
+            var t2 = new Track { Name = "T2", Type = TrackType.Overlay };
+            project.Tracks.Add(t1);
+            project.Tracks.Add(t2);
+
+            var title = new TimelineEvent
+            {
+                Name = "Title", Start = 2, Duration = 3, SourceOut = 3,
+                Text = new TextStyle { Content = "Hello" }
+            };
+            t1.Events.Add(title);
+
+            var move = new MoveEventCommand(title, t1, t2, newStart: 5);
+            move.Execute();
+            Assert.True(t1.Events.Count == 0 && t2.Events.Count == 1, "the clip changed lane");
+            Assert.Close(5, t2.Events[0].Start, "and moved in time", 0.0001);
+
+            move.Undo();
+            Assert.True(t2.Events.Count == 0 && t1.Events.Count == 1, "undo puts it back");
+            Assert.Close(2, t1.Events[0].Start, "with its original start", 0.0001);
+        });
+
+        TestRunner.Add("Clips: lanes only accept what they can render", () =>
+        {
+            var project = new Project();
+            var video = new Track { Name = "V1", Type = TrackType.Video };
+            var overlay = new Track { Name = "T1", Type = TrackType.Overlay };
+            var audio = new Track { Name = "A1", Type = TrackType.Audio };
+            project.Tracks.Add(video);
+            project.Tracks.Add(overlay);
+            project.Tracks.Add(audio);
+
+            var song = new MediaItem { Name = "song.mp3", Type = MediaType.Audio };
+            var clip = new MediaItem { Name = "clip.mp4", Type = MediaType.Video };
+            project.Media.Items.Add(song);
+            project.Media.Items.Add(clip);
+
+            // A title may sit on any visual lane, never on an audio lane.
+            var title = new TimelineEvent { Text = new TextStyle { Content = "Hi" }, Duration = 2 };
+            Assert.True(TrackRouting.Accepts(project, video, title), "titles fit a video lane");
+            Assert.True(TrackRouting.Accepts(project, overlay, title), "titles fit an overlay lane");
+            Assert.False(TrackRouting.Accepts(project, audio, title), "titles do not fit an audio lane");
+
+            var sound = new TimelineEvent { MediaId = song.Id, Duration = 2 };
+            Assert.True(TrackRouting.Accepts(project, audio, sound), "sound on an audio lane");
+            Assert.False(TrackRouting.Accepts(project, overlay, sound), "sound not on an overlay lane");
+
+            var footage = new TimelineEvent { MediaId = clip.Id, Duration = 2 };
+            Assert.True(TrackRouting.Accepts(project, video, footage), "video on a video lane");
+            Assert.True(TrackRouting.Accepts(project, overlay, footage), "video on an overlay lane");
+            Assert.False(TrackRouting.Accepts(project, audio, footage), "video not on an audio lane");
+
+            // A clip whose media is gone belongs nowhere rather than everywhere.
+            var orphan = new TimelineEvent { MediaId = Guid.NewGuid(), Duration = 2 };
+            Assert.False(TrackRouting.Accepts(project, video, orphan), "missing media is not routable");
+
+            Assert.Equal(TrackType.Audio, TrackRouting.LaneKindFor(MediaType.Audio), "new lane for sound");
+            Assert.Equal(TrackType.Video, TrackRouting.LaneKindFor(MediaType.Image), "new lane for stills");
         });
     }
 }

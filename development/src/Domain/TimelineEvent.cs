@@ -63,4 +63,35 @@ public class TimelineEvent
     public Guid? LinkedEventId { get; set; }
 
     public bool Contains(double time) => time >= Start && time < End;
+
+    /// <summary>
+    /// An independent copy for copy/paste and duplicate: same media, trims,
+    /// fades, transform, effects and text — but a new identity, and no link to
+    /// the original's audio partner (the caller re-links a copied pair itself).
+    /// Everything mutable is deep-copied so editing the copy never reaches back.
+    /// </summary>
+    public TimelineEvent Clone() => new()
+    {
+        Id = Guid.NewGuid(),
+        MediaId = MediaId,
+        Name = Name,
+        Start = Start,
+        Duration = Duration,
+        SourceIn = SourceIn,
+        SourceOut = SourceOut,
+        PlaybackRate = PlaybackRate,
+        FadeInDuration = FadeInDuration,
+        FadeOutDuration = FadeOutDuration,
+        FadeInEasing = FadeInEasing,
+        FadeOutEasing = FadeOutEasing,
+        Volume = Volume,
+        Opacity = Opacity,
+        Muted = Muted,
+        Layer = Layer,
+        Text = Text?.Clone(),
+        Transform = Transform.Clone(),
+        Effects = Effects.Select(effect => effect.Clone()).ToList(),
+        Keyframes = Keyframes.Select(track => track.Clone()).ToList(),
+        LinkedEventId = null
+    };
 }

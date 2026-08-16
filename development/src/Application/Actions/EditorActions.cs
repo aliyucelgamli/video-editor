@@ -18,6 +18,9 @@ public static class EditorActions
 
         new ActionDescriptor("edit.undo", "Undo", "Edit", "Ctrl+Z", "Z"),
         new ActionDescriptor("edit.redo", "Redo", "Edit", "Ctrl+Y", "Y"),
+        new ActionDescriptor("edit.copy", "Copy Clip", "Edit", "Ctrl+C"),
+        new ActionDescriptor("edit.paste", "Paste Clip", "Edit", "Ctrl+V"),
+        new ActionDescriptor("edit.duplicate", "Duplicate Clip", "Edit", "Ctrl+D"),
         new ActionDescriptor("edit.delete", "Delete Selected", "Edit", "Delete"),
         new ActionDescriptor("edit.split", "Split at Playhead", "Edit", "S", "X"),
         new ActionDescriptor("edit.unlink", "Unlink Audio/Video", "Edit", "T"),
