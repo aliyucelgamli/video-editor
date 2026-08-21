@@ -446,6 +446,9 @@
                     </MenuItem>
 
                     <MenuItem Header="_Tools">
+                        <MenuItem Header="_Sound Editor…" Command="{Binding ShowSoundEditorCommand}"
+                                  InputGestureText="Ctrl+Shift+A"/>
+                        <Separator/>
                         <MenuItem Header="Download _FFmpeg" Command="{Binding DownloadFfmpegCommand}"/>
                         <MenuItem Header="Open E_xports Folder" Click="MenuOpenExports_Click"/>
                     </MenuItem>

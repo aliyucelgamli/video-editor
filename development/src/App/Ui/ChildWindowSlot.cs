@@ -11,6 +11,12 @@ public sealed class ChildWindowSlot<TWindow> where TWindow : Window
 {
     private TWindow? _current;
 
+    /// <summary>
+    /// The open window, or null. Lets a caller reuse the one already on screen
+    /// (activate it and feed it new input) instead of closing and rebuilding it.
+    /// </summary>
+    public TWindow? Current => _current;
+
     public void Show(Window owner, Func<TWindow> create)
     {
         _current?.Close();

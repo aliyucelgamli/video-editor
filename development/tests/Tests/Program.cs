@@ -22,6 +22,7 @@ public static class Program
         TrackOrderTests.Register();
         ClipboardTests.Register();
         TimelineNavigationTests.Register();
+        SoundEditorTests.Register();
         MediaEngineTests.Register();
         DiagnosticsTests.Register();
         FfmpegIntegrationTests.Register();

@@ -14,8 +14,8 @@ namespace VideoEditor.App;
 
 public partial class MainWindow : Window
 {
-    private const string MediaIdFormat = "VideoEditorMediaId";
-    private const string EffectIdFormat = "VideoEditorEffectId";
+    private const string MediaIdFormat = DragFormats.MediaId;
+    private const string EffectIdFormat = DragFormats.EffectId;
     private const double DragThreshold = 4.0;
 
     /// <summary>Whatever is being dragged floats above everything else.</summary>
@@ -71,6 +71,7 @@ public partial class MainWindow : Window
         _viewModel.ExportRequested += (_, _) => ShowExportDialog();
         _viewModel.AddTextRequested += (_, _) => ShowAddTextDialog();
         _viewModel.LayersRequested += (_, _) => _layersWindow.Show(this, () => new LayersWindow(_viewModel));
+        _viewModel.SoundEditorRequested += (_, mediaId) => ShowSoundEditor(mediaId);
         _viewModel.ExportSessionStarted += (_, session) =>
         {
             // Deferred: ShowDialog pumps messages until the window closes, so
@@ -106,6 +107,7 @@ public partial class MainWindow : Window
         ["timeline.rangeStart"] = _viewModel.SetRangeStartCommand,
         ["timeline.rangeEnd"] = _viewModel.SetRangeEndCommand,
         ["timeline.clearRange"] = _viewModel.ClearRangeCommand,
+        ["tools.soundEditor"] = _viewModel.ShowSoundEditorCommand,
         ["view.zoomIn"] = _viewModel.ZoomInCommand,
         ["view.zoomOut"] = _viewModel.ZoomOutCommand
     };
@@ -184,6 +186,24 @@ public partial class MainWindow : Window
         _viewModel.StartExport(
             dialog.SelectedFormat, dialog.OutputWidth, dialog.OutputHeight, dialog.OutputFps,
             dialog.Crf, dialog.UseHardwareEncoder);
+    }
+
+    /// <summary>
+    /// Tools &gt; Sound Editor: the detailed audio window. Only one is open at a
+    /// time, and asking again for a different clip loads it into the open one
+    /// instead of stacking editors.
+    /// </summary>
+    private void ShowSoundEditor(Guid? mediaId)
+    {
+        if (_soundEditorWindow.Current is { } open)
+        {
+            open.Activate();
+            if (mediaId is { } id) _ = open.LoadMediaAsync(id); // fire-and-forget: the window reports its own status
+            return;
+        }
+
+        _soundEditorWindow.Show(this,
+            () => new SoundEditorWindow(_viewModel.BuildSoundEditorContext(), mediaId));
     }
 
     /// <summary>Text button: style dialog, then a title lands at the playhead.</summary>
@@ -970,6 +990,7 @@ public partial class MainWindow : Window
     // ---------- size + "…" buttons (transform editor / Clip Properties) ----------
 
     private readonly ChildWindowSlot<LayersWindow> _layersWindow = new();
+    private readonly ChildWindowSlot<SoundEditorWindow> _soundEditorWindow = new();
     private readonly ChildWindowSlot<EventPropertiesWindow> _propertiesWindow = new();
     private readonly ChildWindowSlot<TransformEditorWindow> _transformWindow = new();
 
@@ -1009,22 +1030,10 @@ public partial class MainWindow : Window
             properties, editText: () => ShowEditTextDialog(eventId)));
     }
 
-    private static readonly (EasingType Type, string Label)[] EasingChoices =
-    {
-        (EasingType.InOutSine, "Smooth (sine)"),
-        (EasingType.Linear, "Linear"),
-        (EasingType.InSine, "Ease in (sine)"),
-        (EasingType.OutSine, "Ease out (sine)"),
-        (EasingType.InOutQuad, "Smooth (quad)"),
-        (EasingType.InOutCubic, "Smooth (cubic)"),
-        (EasingType.InBack, "Back in (overshoot)"),
-        (EasingType.OutBack, "Back out (overshoot)")
-    };
-
     private static MenuItem BuildEasingMenu(string header, EasingType current, Action<EasingType> apply)
     {
         var root = new MenuItem { Header = header };
-        foreach (var (type, label) in EasingChoices)
+        foreach (var (type, label) in EasingOptions.All)
         {
             var choice = type;
             var item = new MenuItem { Header = label, IsChecked = type == current };
@@ -1139,6 +1148,19 @@ public partial class MainWindow : Window
             var split = new MenuItem { Header = "Split at Playhead", InputGestureText = "S" };
             split.Click += (_, _) => _viewModel.SplitAtPlayheadCommand.Execute(null);
             menu.Items.Add(split);
+
+            if (evt.IsAudio)
+            {
+                var soundEditor = new MenuItem
+                {
+                    Header = "Edit Sound…",
+                    ToolTip = "Opens this clip's source sound in the sound editor — " +
+                              "cut it, level it and export it in another format. " +
+                              "The timeline is not changed."
+                };
+                soundEditor.Click += (_, _) => _viewModel.OpenSoundEditorForEvent(evt.Id);
+                menu.Items.Add(soundEditor);
+            }
 
             if (evt.IsVisual)
             {

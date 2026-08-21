@@ -34,6 +34,30 @@ public static class ProcessRunner
         return new ProcessResult(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
+    /// <summary>
+    /// Runs a process, handing every stdout line to a callback as it arrives —
+    /// what ffmpeg's "-progress pipe:1" needs. The callback runs on a thread
+    /// pool thread, so UI callers must marshal it themselves.
+    /// </summary>
+    public static async Task<ProcessResult> RunAsync(
+        string executable,
+        IReadOnlyList<string> arguments,
+        Action<string> onStandardOutputLine,
+        CancellationToken cancellationToken = default)
+    {
+        using var process = CreateProcess(executable, arguments);
+        var stderr = new StringBuilder();
+        process.OutputDataReceived += (_, e) => { if (e.Data != null) onStandardOutputLine(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        await WaitAsync(process, cancellationToken).ConfigureAwait(false);
+        return new ProcessResult(process.ExitCode, string.Empty, stderr.ToString());
+    }
+
     /// <summary>Runs a process and returns raw bytes from stdout (for PCM / raw frames).</summary>
     public static async Task<(ProcessResult Result, byte[] Output)> RunBytesAsync(
         string executable,

@@ -21,7 +21,17 @@
    an extra `EasingType.Custom`; applies to fades and keyframes.
 4. **Audio playback overhaul** — replace SoundPlayer with a seekable WASAPI
    interop path (no NuGet); short scrub audio; later auto-ducking (music dips
-   under speech).
+   under speech). This is now the biggest rough edge in the **sound editor**
+   too: every audition there re-renders a WAV through ffmpeg before it can play,
+   so Play costs a beat and there is no scrubbing. A seekable path would let the
+   sound editor play its rendered result directly.
+4b. **Sound editor: send the edit back to the timeline** — today it exports to a
+    file and the timeline is untouched. "Replace this clip with the edit" (render
+    into `cache/`, swap the media reference under one undoable command) would
+    close the loop. Needs a decision on where the intermediate lives.
+4c. **Sound editor: batch convert** — apply the current export settings to
+    several library items at once. The format matrix and the planner already
+    support it; only a queue and a progress list are missing.
 5. **Rotation + crop** — render support in `FrameCompositor.ApplyTransform`
    plus a rotation handle and crop mode in the transform editor.
 6. **Chroma key (green screen)** — new kernel + color-picker parameter.

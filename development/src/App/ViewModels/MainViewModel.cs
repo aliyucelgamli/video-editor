@@ -58,6 +58,8 @@ public class MainViewModel : ObservableObject
     private readonly ExportService _exporter;
     private readonly FrameCompositor _compositor;
     private readonly VideoEffectPipeline _effectPipeline;
+    private readonly CachePaths _cache;
+    private readonly MediaProbe _probe;
 
     private string _statusText = "Ready — drop media files into the library or a track";
     private double _pixelsPerSecond = 20.0;
@@ -79,12 +81,13 @@ public class MainViewModel : ObservableObject
 
         // ---- Media engine wiring (all features degrade gracefully without ffmpeg) ----
         var appRoot = CachePaths.LocateAppRoot();
-        var cache = CachePaths.Locate();
+        _cache = CachePaths.Locate();
         _ffmpeg = new FFmpegLocator(appRoot);
+        _probe = new MediaProbe(_ffmpeg);
         var dispatcher = Dispatcher.CurrentDispatcher;
-        _enrichment = new MediaEnrichmentService(new MediaProbe(_ffmpeg), dispatcher);
+        _enrichment = new MediaEnrichmentService(_probe, dispatcher);
         _visuals = new TimelineVisualsService(
-            new ThumbnailService(_ffmpeg, cache), new WaveformService(_ffmpeg, cache), dispatcher);
+            new ThumbnailService(_ffmpeg, _cache), new WaveformService(_ffmpeg, _cache), dispatcher);
 
         _catalog = new EffectCatalog();
         _userEffects = new UserEffectLibrary(
@@ -102,7 +105,7 @@ public class MainViewModel : ObservableObject
         _textRasters = _compositor.TextRasters;
         _exporter = new ExportService(_ffmpeg, _compositor, _catalog);
 
-        var previewAudio = new PreviewAudioService(_ffmpeg, cache, _catalog);
+        var previewAudio = new PreviewAudioService(_ffmpeg, _cache, _catalog);
         Preview = new PreviewViewModel(
             _compositor, _frameExtractor, _effectPipeline, _ffmpeg, () => _projects.Current, previewAudio,
             effectPreview: BuildEffectPreview);
@@ -139,6 +142,7 @@ public class MainViewModel : ObservableObject
         SplitAtPlayheadCommand = new RelayCommand(SplitAtPlayhead);
         AddTextCommand = new RelayCommand(() => AddTextRequested?.Invoke(this, EventArgs.Empty));
         ShowLayersCommand = new RelayCommand(() => LayersRequested?.Invoke(this, EventArgs.Empty));
+        ShowSoundEditorCommand = new RelayCommand(() => OpenSoundEditor(null));
         ClearRangeCommand = new RelayCommand(ClearRange, () => HasExplicitRange);
         ExportCommand = new RelayCommand(Export, () => !_isExporting);
         CancelExportCommand = new RelayCommand(() => _exportCts?.Cancel(), () => _isExporting);
@@ -547,10 +551,7 @@ public class MainViewModel : ObservableObject
     public async void StartExport(
         ExportFormat format, int width, int height, double fps, int crf, bool useHardwareEncoder)
     {
-        var exportDir = Settings.DefaultExportFolder is { Length: > 0 } configured
-            ? configured
-            : Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
-        try { Directory.CreateDirectory(exportDir); } catch { exportDir = string.Empty; }
+        var exportDir = ResolveExportFolder();
 
         var dialog = new SaveFileDialog
         {
@@ -1662,7 +1663,49 @@ public class MainViewModel : ObservableObject
     /// <summary>Raised when the Layers window should open (handled by the window).</summary>
     public event EventHandler? LayersRequested;
 
+    /// <summary>
+    /// Raised when the sound editor should open. The payload is the library item
+    /// to load, or null for an empty editor the user drops a file into.
+    /// </summary>
+    public event EventHandler<Guid?>? SoundEditorRequested;
+
+    /// <summary>Opens the sound editor, optionally on a specific library item.</summary>
+    public void OpenSoundEditor(Guid? mediaId) => SoundEditorRequested?.Invoke(this, mediaId);
+
+    /// <summary>
+    /// Opens the sound editor on the media behind a timeline clip. Used by the
+    /// clip context menu, so an audio clip on the timeline is one click from the
+    /// waveform it came from.
+    /// </summary>
+    public void OpenSoundEditorForEvent(Guid eventId)
+    {
+        if (_projects.Current.FindEvent(eventId) is not { } found) return;
+        OpenSoundEditor(found.Event.MediaId);
+    }
+
+    /// <summary>
+    /// Where exports land: the configured folder, else user\exports. One home for
+    /// the rule, shared by the project export and the sound editor.
+    /// </summary>
+    private string ResolveExportFolder()
+    {
+        var folder = Settings.DefaultExportFolder is { Length: > 0 } configured
+            ? configured
+            : Path.Combine(CachePaths.LocateAppRoot(), "user", "exports");
+        try { Directory.CreateDirectory(folder); } catch { return string.Empty; }
+        return folder;
+    }
+
+    /// <summary>The services the sound editor borrows from the running app.</summary>
+    public SoundEditorContext BuildSoundEditorContext() => new(
+        _ffmpeg, _cache, _catalog, _visuals, _probe,
+        mediaId => _projects.Current.Media.FindById(mediaId),
+        ResolveExportFolder());
+
     public RelayCommand ShowLayersCommand { get; private set; } = null!;
+
+    /// <summary>Tools &gt; Sound Editor… — opens the detailed audio editing window.</summary>
+    public RelayCommand ShowSoundEditorCommand { get; private set; } = null!;
 
     /// <summary>Sets a clip's layer (undoable, re-renders the preview).</summary>
     public void SetEventLayer(Guid eventId, int layer)

@@ -26,6 +26,8 @@ public static class EditorActions
         new ActionDescriptor("edit.unlink", "Unlink Audio/Video", "Edit", "T"),
         new ActionDescriptor("edit.addText", "Add Text", "Edit"),
 
+        new ActionDescriptor("tools.soundEditor", "Sound Editor", "Tools", "Ctrl+Shift+A"),
+
         new ActionDescriptor("playback.toggle", "Play / Pause", "Playback", "Space"),
 
         new ActionDescriptor("timeline.rangeStart", "Set Export Range Start", "Timeline", "I"),

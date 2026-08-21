@@ -1,0 +1,532 @@
+<Window x:Class="VideoEditor.App.SoundEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:VideoEditor.App.Ui"
+        Title="Sound Editor"
+        Width="1060" Height="680" MinWidth="860" MinHeight="540"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        AllowDrop="True"
+        Background="{StaticResource BackgroundBrush}"
+        FontFamily="Segoe UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        DragOver="Window_DragOver" Drop="Window_Drop"
+        PreviewKeyDown="Window_PreviewKeyDown" Closed="Window_Closed">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <DockPanel Margin="12,10">
+
+        <!-- ================= Header: which sound is loaded ================= -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
+                CornerRadius="5" Padding="12,9" Margin="0,0,0,8">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource ToolButton}" Padding="11,6" Click="OpenFile_Click"
+                            ToolTip="Pick an audio or video file to edit the sound of">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE838;"/>
+                            <TextBlock Text="Open…" Margin="6,0,0,0"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButton}" Padding="11,6" Margin="6,0,0,0"
+                            Click="Undo_Click" IsEnabled="{Binding CanUndo}"
+                            ToolTip="Undo the last sound edit (Ctrl+Z) — the timeline's own history is untouched">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE7A7;"/>
+                            <TextBlock Text="Undo" Margin="6,0,0,0"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButton}" Padding="11,6" Margin="6,0,0,0"
+                            Click="ResetClip_Click" IsEnabled="{Binding HasClip}"
+                            ToolTip="Throw the edits away and go back to the whole original file">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE72C;"/>
+                            <TextBlock Text="Original" Margin="6,0,0,0"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <TextBlock Text="&#xE767;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                           VerticalAlignment="Center" Foreground="#FF43A06A"/>
+                <StackPanel Margin="10,0,12,0">
+                    <TextBlock Text="{Binding ClipName}" FontSize="14" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock Text="{Binding MetaLabel}" FontSize="11" Margin="0,2,0,0"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource SubtleTextBrush}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ================= Right: edit / pieces / fx / export ================= -->
+        <Border DockPanel.Dock="Right" Width="336" Margin="8,0,0,0"
+                Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1" CornerRadius="5">
+            <TabControl Style="{StaticResource SideTabControl}">
+
+                <!-- = EDIT = -->
+                <TabItem Header="EDIT" Style="{StaticResource SideTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Padding="12,10">
+                        <StackPanel>
+
+                            <TextBlock Text="SELECTION" Style="{StaticResource PanelHeader}"/>
+                            <TextBlock Text="{Binding SelectionLabel}" FontSize="11" Margin="0,4,0,8"
+                                       TextWrapping="Wrap" Foreground="#FFFFD54F"/>
+
+                            <UniformGrid Columns="2" Margin="0,0,0,6">
+                                <Button Style="{StaticResource ToolButton}" Margin="0,0,3,0" Padding="8,6"
+                                        Content="Trim to selection" Click="TrimToSelection_Click"
+                                        ToolTip="Keep only the selected span and throw the rest away"/>
+                                <Button Style="{StaticResource ToolButton}" Margin="3,0,0,0" Padding="8,6"
+                                        Content="Delete selection" Click="DeleteSelection_Click"
+                                        ToolTip="Cut the selected span out and close the gap"/>
+                            </UniformGrid>
+                            <UniformGrid Columns="2" Margin="0,0,0,6">
+                                <Button Style="{StaticResource ToolButton}" Margin="0,0,3,0" Padding="8,6"
+                                        Content="Select all" Click="SelectAll_Click"/>
+                                <Button Style="{StaticResource ToolButton}" Margin="3,0,0,0" Padding="8,6"
+                                        Content="Clear selection" Click="ClearSelection_Click"/>
+                            </UniformGrid>
+
+                            <TextBlock Text="AT THE PLAYHEAD" Style="{StaticResource PanelHeader}"
+                                       Margin="0,10,0,0"/>
+                            <UniformGrid Columns="3" Margin="0,6,0,0">
+                                <Button Style="{StaticResource ToolButton}" Margin="0,0,3,0" Padding="6,6"
+                                        Content="Split" Click="Split_Click"
+                                        ToolTip="Cut the piece under the playhead in two (S)"/>
+                                <Button Style="{StaticResource ToolButton}" Margin="3,0,3,0" Padding="6,6"
+                                        Content="Trim start" Click="TrimStart_Click"
+                                        ToolTip="Throw away everything before the playhead"/>
+                                <Button Style="{StaticResource ToolButton}" Margin="3,0,0,0" Padding="6,6"
+                                        Content="Trim end" Click="TrimEnd_Click"
+                                        ToolTip="Throw away everything after the playhead"/>
+                            </UniformGrid>
+
+                            <Border Height="1" Background="{StaticResource EdgeBrush}" Margin="0,14,0,12"/>
+
+                            <!-- Level and fades of the piece under the playhead -->
+                            <StackPanel Visibility="{Binding HasSelectedSegment, Converter={StaticResource BoolToVis}}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                               Text="{Binding SelectedSegment.SourceRangeLabel}"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                    <TextBlock Style="{StaticResource PanelHeader}"
+                                               Text="{Binding SelectedSegment.TitleLabel}"/>
+                                </DockPanel>
+
+                                <DockPanel Margin="0,8,0,0">
+                                    <TextBlock DockPanel.Dock="Left" Text="Level" Width="58" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                    <TextBlock DockPanel.Dock="Right" Width="104" TextAlignment="Right"
+                                               FontSize="11" VerticalAlignment="Center"
+                                               Text="{Binding SelectedSegment.GainLabel}"
+                                               Foreground="{StaticResource TextBrush}"/>
+                                    <Slider Style="{StaticResource FlatSlider}" Minimum="0" Maximum="200"
+                                            Margin="4,0" VerticalAlignment="Center"
+                                            Value="{Binding SelectedSegment.GainPercent, Mode=TwoWay}"
+                                            PreviewMouseLeftButtonDown="Slider_PreviewMouseDown"/>
+                                </DockPanel>
+
+                                <DockPanel Margin="0,8,0,0">
+                                    <TextBlock DockPanel.Dock="Left" Text="Fade in" Width="58" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                    <TextBlock DockPanel.Dock="Right" Width="52" TextAlignment="Right"
+                                               FontSize="11" VerticalAlignment="Center"
+                                               Text="{Binding SelectedSegment.FadeInLabel}"
+                                               Foreground="{StaticResource TextBrush}"/>
+                                    <Slider Style="{StaticResource FlatSlider}" Margin="4,0"
+                                            VerticalAlignment="Center" Minimum="0" Maximum="1"
+                                            Value="{Binding SelectedSegment.FadeInFraction, Mode=TwoWay}"
+                                            ToolTip="Fade length, as a share of this piece"
+                                            PreviewMouseLeftButtonDown="Slider_PreviewMouseDown"/>
+                                </DockPanel>
+                                <ComboBox Margin="58,4,0,0" ItemsSource="{Binding EasingLabels}"
+                                          SelectedIndex="{Binding SelectedSegment.FadeInEasingIndex, Mode=TwoWay}"
+                                          ToolTip="Shape of the fade-in curve"/>
+
+                                <DockPanel Margin="0,10,0,0">
+                                    <TextBlock DockPanel.Dock="Left" Text="Fade out" Width="58" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                    <TextBlock DockPanel.Dock="Right" Width="52" TextAlignment="Right"
+                                               FontSize="11" VerticalAlignment="Center"
+                                               Text="{Binding SelectedSegment.FadeOutLabel}"
+                                               Foreground="{StaticResource TextBrush}"/>
+                                    <Slider Style="{StaticResource FlatSlider}" Margin="4,0"
+                                            VerticalAlignment="Center" Minimum="0" Maximum="1"
+                                            Value="{Binding SelectedSegment.FadeOutFraction, Mode=TwoWay}"
+                                            ToolTip="Fade length, as a share of this piece"
+                                            PreviewMouseLeftButtonDown="Slider_PreviewMouseDown"/>
+                                </DockPanel>
+                                <ComboBox Margin="58,4,0,0" ItemsSource="{Binding EasingLabels}"
+                                          SelectedIndex="{Binding SelectedSegment.FadeOutEasingIndex, Mode=TwoWay}"
+                                          ToolTip="Shape of the fade-out curve"/>
+
+                                <DockPanel Margin="0,10,0,0">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                                            Padding="10,4" Content="Reset piece" Click="ResetSegment_Click"/>
+                                    <CheckBox Style="{StaticResource FlatCheckBox}" Content="Mute this piece"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding SelectedSegment.Muted, Mode=TwoWay}"/>
+                                </DockPanel>
+                            </StackPanel>
+
+                            <Border Height="1" Background="{StaticResource EdgeBrush}" Margin="0,14,0,12"/>
+
+                            <TextBlock Text="MASTER" Style="{StaticResource PanelHeader}"/>
+                            <DockPanel Margin="0,8,0,0">
+                                <TextBlock DockPanel.Dock="Left" Text="Level" Width="58" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBlock DockPanel.Dock="Right" Width="104" TextAlignment="Right"
+                                           FontSize="11" VerticalAlignment="Center"
+                                           Text="{Binding MasterGainLabel}"
+                                           Foreground="{StaticResource TextBrush}"/>
+                                <Slider Style="{StaticResource FlatSlider}" Minimum="0" Maximum="200"
+                                        Margin="4,0" VerticalAlignment="Center"
+                                        Value="{Binding MasterGainPercent, Mode=TwoWay}"
+                                        PreviewMouseLeftButtonDown="Slider_PreviewMouseDown"/>
+                            </DockPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- = PIECES = -->
+                <TabItem Header="PIECES" Style="{StaticResource SideTabItem}">
+                    <DockPanel Margin="12,10">
+                        <TextBlock DockPanel.Dock="Top" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Text="Splitting a sound makes pieces. They play top to bottom — reorder or drop them, and the source file stays untouched."/>
+                        <ListBox x:Name="PieceList" Background="Transparent" BorderThickness="0"
+                                 ItemsSource="{Binding Segments}"
+                                 SelectedItem="{Binding SelectedSegment, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource MediaItemContainer}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel ToolTip="{Binding ToolTip}">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                                    VerticalAlignment="Center">
+                                            <Button Content="&#xE96D;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                    Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                                    Tag="{Binding Id}" Click="PieceUp_Click"
+                                                    ToolTip="Play this piece earlier"/>
+                                            <Button Content="&#xE96E;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                    Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                                    Tag="{Binding Id}" Click="PieceDown_Click"
+                                                    ToolTip="Play this piece later"/>
+                                            <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                    Style="{StaticResource TrackToggle}" Width="22" Height="18"
+                                                    Margin="4,0,0,0" Tag="{Binding Id}" Click="PieceRemove_Click"
+                                                    ToolTip="Drop this piece"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding NumberLabel}" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextBrush}"/>
+                                                <TextBlock Text="{Binding DurationLabel}" Margin="8,0,0,0"
+                                                           Foreground="{StaticResource TextBrush}"/>
+                                            </StackPanel>
+                                            <TextBlock FontSize="10" Margin="0,2,0,0"
+                                                       Foreground="{StaticResource SubtleTextBrush}">
+                                                <Run Text="{Binding SourceRangeLabel, Mode=OneWay}"/>
+                                                <Run Text="  •  "/>
+                                                <Run Text="{Binding GainLabel, Mode=OneWay}"/>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- = FX = -->
+                <TabItem Header="FX" Style="{StaticResource SideTabItem}">
+                    <Grid Margin="12,10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="140"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="AUDIO EFFECTS — double-click to add"
+                                   Style="{StaticResource PanelHeader}" Margin="0,0,0,5"/>
+                        <ListBox Grid.Row="1" x:Name="EffectList" Background="Transparent"
+                                 BorderThickness="0" ItemsSource="{Binding AvailableEffects}"
+                                 ItemContainerStyle="{StaticResource MediaItemContainer}"
+                                 MouseDoubleClick="EffectList_MouseDoubleClick"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" ToolTip="{Binding ToolTip}">
+                                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="10" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBlock Text="{Binding Name}" Margin="7,0,0,0"
+                                                   Foreground="{StaticResource TextBrush}"/>
+                                        <TextBlock Text="{Binding SourceLabel}" Margin="7,0,0,0" FontSize="10"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{StaticResource SubtleTextBrush}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <DockPanel Grid.Row="2" Margin="0,12,0,5">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="10,4"
+                                    Content="Add" Click="AddEffect_Click"
+                                    ToolTip="Add the selected effect to the chain"/>
+                            <TextBlock Text="CHAIN — applied in order" Style="{StaticResource PanelHeader}"
+                                       VerticalAlignment="Center"/>
+                        </DockPanel>
+
+                        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel>
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Text="No effects yet — the sound exports as it is."
+                                           Visibility="{Binding HasNoEffects, Converter={StaticResource BoolToVis}}"/>
+                                <ItemsControl ItemsSource="{Binding AppliedEffects}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{StaticResource PanelAltBrush}" CornerRadius="4"
+                                                    Padding="8,6" Margin="0,0,0,6" ToolTip="{Binding ToolTip}">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                            <Button Content="&#xE96D;" FontFamily="Segoe MDL2 Assets"
+                                                                    FontSize="10" Width="22" Height="18"
+                                                                    Style="{StaticResource TrackToggle}"
+                                                                    Tag="{Binding Id}" Click="EffectUp_Click"
+                                                                    ToolTip="Apply this effect earlier"/>
+                                                            <Button Content="&#xE96E;" FontFamily="Segoe MDL2 Assets"
+                                                                    FontSize="10" Width="22" Height="18"
+                                                                    Style="{StaticResource TrackToggle}"
+                                                                    Tag="{Binding Id}" Click="EffectDown_Click"
+                                                                    ToolTip="Apply this effect later"/>
+                                                            <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets"
+                                                                    FontSize="10" Width="22" Height="18"
+                                                                    Margin="4,0,0,0"
+                                                                    Style="{StaticResource TrackToggle}"
+                                                                    Tag="{Binding Id}" Click="EffectRemove_Click"
+                                                                    ToolTip="Remove this effect"/>
+                                                        </StackPanel>
+                                                        <CheckBox Style="{StaticResource FlatCheckBox}"
+                                                                  VerticalAlignment="Center"
+                                                                  Content="{Binding Name}"
+                                                                  IsChecked="{Binding Enabled, Mode=TwoWay}"/>
+                                                    </DockPanel>
+                                                    <ItemsControl ItemsSource="{Binding Parameters}"
+                                                                  Margin="0,6,0,0">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <DockPanel Margin="0,3,0,0">
+                                                                    <TextBlock DockPanel.Dock="Left" Width="62"
+                                                                               FontSize="11" VerticalAlignment="Center"
+                                                                               Text="{Binding Label}"
+                                                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                    <TextBlock DockPanel.Dock="Right" Width="62"
+                                                                               FontSize="11" TextAlignment="Right"
+                                                                               VerticalAlignment="Center"
+                                                                               Text="{Binding ValueLabel}"
+                                                                               Foreground="{StaticResource TextBrush}"/>
+                                                                    <Slider Style="{StaticResource FlatSlider}"
+                                                                            Margin="4,0" VerticalAlignment="Center"
+                                                                            Minimum="{Binding Minimum}"
+                                                                            Maximum="{Binding Maximum}"
+                                                                            SmallChange="{Binding Step}"
+                                                                            Value="{Binding Value, Mode=TwoWay}"
+                                                                            PreviewMouseLeftButtonDown="Slider_PreviewMouseDown"/>
+                                                                </DockPanel>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </TabItem>
+
+                <!-- = EXPORT = -->
+                <TabItem Header="EXPORT" Style="{StaticResource SideTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Padding="12,10">
+                        <StackPanel>
+                            <TextBlock Text="PRESET" Style="{StaticResource PanelHeader}" Margin="0,0,0,5"/>
+                            <ComboBox ItemsSource="{Binding Export.PresetNames}"
+                                      SelectedIndex="{Binding Export.PresetIndex, Mode=TwoWay}"
+                                      ToolTip="One click sets format, rate, channels and normalization"/>
+
+                            <TextBlock Text="FORMAT" Style="{StaticResource PanelHeader}" Margin="0,12,0,5"/>
+                            <ComboBox ItemsSource="{Binding Export.FormatNames}"
+                                      SelectedIndex="{Binding Export.FormatIndex, Mode=TwoWay}"/>
+
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding Export.ShowsBitrate, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="Bitrate" FontSize="11"
+                                           Foreground="{StaticResource SubtleTextBrush}"/>
+                                <ComboBox Margin="0,4,0,0" ItemsSource="{Binding Export.BitrateNames}"
+                                          SelectedIndex="{Binding Export.BitrateIndex, Mode=TwoWay}"/>
+                            </StackPanel>
+
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding Export.ShowsBitDepth, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="Bit depth" FontSize="11"
+                                           Foreground="{StaticResource SubtleTextBrush}"/>
+                                <ComboBox Margin="0,4,0,0" ItemsSource="{Binding Export.BitDepthNames}"
+                                          SelectedIndex="{Binding Export.BitDepthIndex, Mode=TwoWay}"/>
+                            </StackPanel>
+
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding Export.ShowsFlacCompression, Converter={StaticResource BoolToVis}}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                               Text="{Binding Export.FlacCompressionLabel}"
+                                               Foreground="{StaticResource TextBrush}"/>
+                                    <TextBlock Text="Compression" FontSize="11"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                </DockPanel>
+                                <Slider Style="{StaticResource FlatSlider}" Minimum="0" Maximum="12"
+                                        Margin="0,4,0,0" IsSnapToTickEnabled="True" TickFrequency="1"
+                                        Value="{Binding Export.FlacCompression, Mode=TwoWay}"
+                                        ToolTip="Higher takes longer and makes a smaller file — the audio is identical either way"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Sample rate" FontSize="11" Margin="0,10,0,0"
+                                       Foreground="{StaticResource SubtleTextBrush}"/>
+                            <ComboBox Margin="0,4,0,0" ItemsSource="{Binding Export.SampleRateNames}"
+                                      SelectedIndex="{Binding Export.SampleRateIndex, Mode=TwoWay}"/>
+                            <TextBlock Text="{Binding Export.SampleRateNoteLabel}" FontSize="10"
+                                       Margin="0,3,0,0" TextWrapping="Wrap" Foreground="#FFFFD54F"/>
+
+                            <TextBlock Text="Channels" FontSize="11" Margin="0,10,0,0"
+                                       Foreground="{StaticResource SubtleTextBrush}"/>
+                            <ComboBox Margin="0,4,0,0" ItemsSource="{Binding Export.ChannelNames}"
+                                      SelectedIndex="{Binding Export.ChannelIndex, Mode=TwoWay}"/>
+
+                            <TextBlock Text="PROCESSING" Style="{StaticResource PanelHeader}" Margin="0,14,0,5"/>
+                            <ComboBox ItemsSource="{Binding Export.NormalizeNames}"
+                                      SelectedIndex="{Binding Export.NormalizeIndex, Mode=TwoWay}"
+                                      ToolTip="Peak measures the finished sound and lifts it to the target — best for game SFX. Loudness matches perceived volume across clips. Either way the level is set when the file is written, so the audition plays the edit at its natural level."/>
+                            <CheckBox Style="{StaticResource FlatCheckBox}" Margin="0,8,0,0"
+                                      Content="Trim silence off both ends"
+                                      IsChecked="{Binding Export.TrimSilence, Mode=TwoWay}"
+                                      ToolTip="Cuts leading and trailing near-silence from the exported file only"/>
+
+                            <Border Height="1" Background="{StaticResource EdgeBrush}" Margin="0,14,0,10"/>
+
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Right" FontSize="11"
+                                           Text="{Binding Export.SizeEstimateLabel}"
+                                           Foreground="{StaticResource TextBrush}"/>
+                                <TextBlock Text="Estimated size" FontSize="11"
+                                           Foreground="{StaticResource SubtleTextBrush}"/>
+                            </DockPanel>
+
+                            <Button Style="{StaticResource ToolButton}" Background="#FF3A3115"
+                                    Margin="0,12,0,0" Padding="14,8" Click="Export_Click"
+                                    IsEnabled="{Binding HasClip}">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE898;"
+                                               Foreground="#FFFFD54F"/>
+                                    <TextBlock Text="Export sound…" Margin="7,0,0,0" FontWeight="SemiBold"/>
+                                </StackPanel>
+                            </Button>
+
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding IsExporting, Converter={StaticResource BoolToVis}}">
+                                <ProgressBar Style="{StaticResource FlatProgressBar}" Height="6"
+                                             Minimum="0" Maximum="1" Value="{Binding ExportProgress}"/>
+                                <DockPanel Margin="0,6,0,0">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                                            Padding="10,3" Content="Cancel" Click="CancelExport_Click"/>
+                                    <TextBlock Text="{Binding ExportStatus}" FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource SubtleTextBrush}"/>
+                                </DockPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+        </Border>
+
+        <!-- ================= Status line ================= -->
+        <TextBlock DockPanel.Dock="Bottom" Margin="2,8,0,0" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Text="{Binding StatusText}"
+                   Foreground="{StaticResource SubtleTextBrush}"/>
+
+        <!-- ================= Transport ================= -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
+                CornerRadius="5" Padding="10,7" Margin="0,8,0,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ZoomLabel}" Width="34" TextAlignment="Right" FontSize="11"
+                               VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}"/>
+                    <Button Style="{StaticResource ToolButton}" Padding="7,4" Margin="8,0,0,0"
+                            Click="ZoomOut_Click" ToolTip="Zoom out">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE71F;"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolButton}" Padding="7,4" Margin="4,0,0,0"
+                            Click="ZoomIn_Click" ToolTip="Zoom in">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE8A3;"/>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="PlayButton" Style="{StaticResource ToolButton}" Padding="9,5"
+                            Click="PlayStop_Click"
+                            ToolTip="Play from the playhead (Space) — you hear exactly what will be exported">
+                        <TextBlock x:Name="PlayGlyph" Style="{StaticResource ButtonIcon}" Text="&#xE768;"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolButton}" Padding="9,5" Margin="5,0,0,0"
+                            Click="Rewind_Click" ToolTip="Back to the start">
+                        <TextBlock Style="{StaticResource ButtonIcon}" Text="&#xE892;"/>
+                    </Button>
+                    <TextBlock Text="{Binding TimeLabel}" Margin="12,0,0,0" VerticalAlignment="Center"
+                               FontFamily="Consolas" Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock Text="drag to select · double-click to select a piece · right-click clears"
+                               Margin="16,0,0,0" FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource SubtleTextBrush}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ================= Waveform ================= -->
+        <Border Background="{StaticResource LaneBrush}" BorderBrush="{StaticResource EdgeBrush}"
+                BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+            <Grid>
+                <ScrollViewer x:Name="WaveScroll" HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled"
+                              SizeChanged="WaveScroll_SizeChanged">
+                    <ui:WaveformStrip x:Name="Wave"
+                                      MouseLeftButtonDown="Wave_MouseLeftButtonDown"
+                                      MouseMove="Wave_MouseMove"
+                                      MouseLeftButtonUp="Wave_MouseLeftButtonUp"
+                                      MouseRightButtonDown="Wave_MouseRightButtonDown"/>
+                </ScrollViewer>
+
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextAlignment="Center" FontSize="13" IsHitTestVisible="False"
+                           Visibility="{Binding HasNoClip, Converter={StaticResource BoolToVis}}"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           Text="Drop an audio file here&#x0a;or drag one in from the media library"/>
+            </Grid>
+        </Border>
+    </DockPanel>
+</Window>

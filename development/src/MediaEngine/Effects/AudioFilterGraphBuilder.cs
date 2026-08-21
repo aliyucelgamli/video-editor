@@ -26,14 +26,7 @@ public static class AudioFilterGraphBuilder
         if (Math.Abs(evt.PlaybackRate - 1.0) > 0.001)
             filters.AddRange(TempoChain(evt.PlaybackRate));
 
-        foreach (var instance in evt.Effects)
-        {
-            if (!instance.Enabled) continue;
-            if (catalog.Find(instance.Type) is not { } definition) continue;
-
-            foreach (var step in definition.ResolveSteps(instance.Parameters))
-                filters.AddRange(FiltersForKernel(step, sampleRate));
-        }
+        filters.AddRange(EffectFilters(evt.Effects, catalog, sampleRate));
 
         var volume = VolumeLimits.Clamp(evt.Muted ? 0 : evt.Volume) * VolumeLimits.Clamp(trackVolume);
         if (Math.Abs(volume - 1.0) > 0.001)
@@ -51,6 +44,29 @@ public static class AudioFilterGraphBuilder
         }
 
         return string.Join(",", filters);
+    }
+
+    /// <summary>
+    /// Filter chain for a bare effect list, with no volume or fades attached —
+    /// the sound editor's master chain. Empty when nothing is enabled.
+    /// </summary>
+    public static string BuildEffectFilter(
+        IEnumerable<EffectInstance> effects, IEffectCatalog catalog, int sampleRate) =>
+        string.Join(",", EffectFilters(effects, catalog, sampleRate));
+
+    /// <summary>Kernel filters of every enabled effect, in order.</summary>
+    private static IEnumerable<string> EffectFilters(
+        IEnumerable<EffectInstance> effects, IEffectCatalog catalog, int sampleRate)
+    {
+        foreach (var instance in effects)
+        {
+            if (!instance.Enabled) continue;
+            if (catalog.Find(instance.Type) is not { } definition) continue;
+
+            foreach (var step in definition.ResolveSteps(instance.Parameters))
+                foreach (var filter in FiltersForKernel(step, sampleRate))
+                    yield return filter;
+        }
     }
 
     /// <summary>

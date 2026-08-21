@@ -38,7 +38,9 @@ development/
   src/
     Domain/        Pure model, no dependencies. Project, Track, TimelineEvent, MediaItem,
                    TimeRange (export range), VolumeLimits, Effects/ (EffectDefinition,
-                   EffectStep, EffectTarget, IEffectCatalog). Time unit: double seconds.
+                   EffectStep, EffectTarget, IEffectCatalog), Sound/ (SoundEditSession +
+                   SoundSegment — the sound editor's cut list, not part of a .veproj).
+                   Time unit: double seconds.
     Application/   Use cases. Commands (IEditorCommand + undo/redo), ProjectService,
                    Effects/ (EffectCatalog, BuiltInEffects, UserEffectLibrary).
                    Depends only on Domain.
@@ -46,11 +48,13 @@ development/
     MediaEngine/   FFmpeg integration; depends only on Domain. Probe, thumbnails, waveform
                    peaks, frame extraction, FrameCompositor, video kernels (CPU "shaders",
                    including time-varying ones like glitch), AudioFilterGraphBuilder
-                   (ffmpeg filters), ExportService. Fully async.
+                   (ffmpeg filters), ExportService, Audio/ (AudioChainOptions,
+                   AudioClipPlanner + AudioClipExportService — the sound editor's own
+                   ffmpeg command construction and runner). Fully async.
     App/           WPF (MVVM). ViewModels + Services (TimelineVisualsService,
                    MediaEnrichmentService) + XAML. No FFmpeg calls in views/viewmodels —
                    always go through MediaEngine services.
-  tests/Tests/     Zero-dependency test suite (92 tests). Run: test.bat / dotnet run.
+  tests/Tests/     Zero-dependency test suite (118 tests). Run: test.bat / dotnet run.
 examples/          Tiny test assets (1080p clips, 64×64 images) for drag & drop testing.
 user/              User-editable assets (effects/*.vefx, templates, fonts, exports…).
                    NEVER deleted by updates.
@@ -75,7 +79,13 @@ Application.
 3. **Preview == export.** Both run through `FrameCompositor` + `VideoEffectPipeline`.
    Never add preview-only composition logic export doesn't share. Time-varying kernels get
    the hidden `__time` argument injected by the pipeline and must be deterministic
-   (same time + args ⇒ same pixels).
+   (same time + args ⇒ same pixels). Audio the same way: the sound editor's audition and
+   its export share one `AudioChainOptions`, and the audition window is cut out of the
+   FINISHED audio (`atrim` at the end of the graph), never out of the model — slicing the
+   model destroyed any fade the playhead sat inside. The single exception is normalization,
+   which cannot be windowed exactly (a peak normalize needs a second pass, loudnorm is
+   adaptive), so it is export-only and the UI says so. A test proves the rest by
+   phase-inverting the audition against the export and asserting it nulls below -60 dBFS.
 4. **Async everything heavy.** FFmpeg runs via `ProcessRunner` (async, cancellable). The UI
    thread never waits on media work; UI callbacks are marshalled through the Dispatcher.
    Intentional fire-and-forget calls are discarded explicitly (`_ = …`) with a comment —
@@ -109,7 +119,7 @@ See **`vefx.md`** for the authoring guide and full kernel catalog. Summary:
 - `.vefx` files live in `user/effects/`, load at startup, import via panel button or
   drag & drop, and may override built-in ids.
 
-## Feature state (2026-08-16, round 25)
+## Feature state (2026-08-20, round 26)
 
 Done: project model + .veproj; undo/redo commands; timeline (zoom, scroll-sync, selection,
 drag-move with snap, **Shift+edge time stretch**); Explorer/library drag & drop; linked A/V
@@ -224,11 +234,23 @@ importing a video with sound makes two events sharing ONE media item, so reading
 off the media called the sound half "video" and routed it onto a picture lane — that is why
 duplicating a sound clip appeared to duplicate the video. Same rule now governs cross-lane
 dragging, so linked audio can only be dragged between audio lanes. run.bat build-first flow.
-90 tests green.
+**Sound editor** (Tools > Sound Editor…, Ctrl+Shift+A, or "Edit Sound…" on an audio clip):
+a detailed audio window over ONE source file, independent of the timeline. Drop a file on it
+or drag a library item in; drag the waveform to select, split (S), trim to / delete the
+selection, trim either edge to the playhead, reorder and drop the resulting pieces, set
+per-piece level and eased fades plus a master level, stack audio effects from the same
+catalog the timeline uses, and export to MP3 / OGG Vorbis / Opus / WAV / FLAC / M4A-AAC with
+bitrate, sample rate, channels, WAV bit depth, FLAC level, peak or loudness normalization,
+silence trim and game-oriented presets. Non-destructive: the model is
+`Domain/Sound/SoundEditSession` (ordered `SoundSegment` windows into the file) and the source
+is only ever read. Its own snapshot undo, deliberately NOT on the timeline's undo stack.
+118 tests green.
 
 Terminology: a clip on the timeline is a `TimelineEvent` in code (VEGAS calls them
 events) and a "clip" in the UI. A *track* (or lane) is a row; a *layer* is the z-order
-number a clip carries — they are different things and the docs keep them apart.
+number a clip carries — they are different things and the docs keep them apart. In the
+sound editor a *piece* is a `SoundSegment`; *source time* is an offset in the file and
+*output time* an offset in the edited result, and the API never mixes them up.
 
 Not done yet: see **`TODO.md`** at the repo root — the prioritized backlog. It is a
 living list: items are ordered by importance and DELETED when they land (no archive;
@@ -260,6 +282,16 @@ Based on the Microsoft C# coding conventions, adapted to this codebase:
   modifier-less letters \u2014 build key bindings with property initializers instead;
   an element may not carry both a `Style="..."` attribute and a `<Tag.Style>` block
   (MC3024) \u2014 put `BasedOn` on the block instead.
+- A WPF `Slider` COERCES an incoming `Value` against whatever `Maximum` it currently holds,
+  and a bound `Maximum` can arrive after the `Value`. Never two-way-bind a value to a slider
+  whose `Maximum` is also bound — the coerced value is written back and the model silently
+  loses data. Bind a 0–1 fraction against a constant `Maximum` instead (see
+  `SoundSegmentViewModel.FadeInFraction`).
+- XML comments in XAML may not contain `--`, so a `<!-- ---- SECTION ---- -->` divider is a
+  parse error, not a comment.
+- ffmpeg `silenceremove`: `start_duration` is how much non-silence it buffers before it stops
+  trimming, and that buffer is DISCARDED. It must be 0, or every export loses its first
+  transient; "leave a short silence alone" is `start_silence`.
 - Pixel loops: BGRA buffers are cast to `uint` spans so a pixel moves in one 32-bit
   operation. `MemoryMarshal.Cast<byte, uint>(array)` binds to the ReadOnlySpan overload
   and the result is not writable \u2014 pass `array.AsSpan()` to get a `Span<uint>`.
